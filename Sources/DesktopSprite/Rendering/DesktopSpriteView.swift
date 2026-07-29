@@ -16,6 +16,12 @@ struct DesktopSpriteView: View {
     /// Where the artwork comes from. See ``SpriteProvider``.
     let provider: any SpriteProvider
 
+    /// The backing scale factor of whichever display the window is currently on.
+    ///
+    /// SwiftUI keeps this up to date when the window moves between a Retina and a
+    /// non-Retina screen, which is exactly what ``pixelSnapped(_:)`` needs.
+    @Environment(\.displayScale) private var displayScale
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             // The window is transparent and full-width. This background exists only
@@ -39,9 +45,29 @@ struct DesktopSpriteView: View {
                 // Artwork is drawn facing right; mirror it for leftward movement
                 // rather than authoring a second set of frames.
                 .scaleEffect(x: viewModel.facing == .right ? 1 : -1, y: 1)
-                .position(viewModel.spriteCenter)
+                .position(pixelSnapped(viewModel.spriteCenter))
         }
         .ignoresSafeArea()
+    }
+
+    /// Rounds a point onto the physical pixel grid.
+    ///
+    /// The view model advances position by `speed × delta`, which lands the sprite on
+    /// fractional point values. Pixel art cannot survive that: at 4× scale, a sprite
+    /// sitting half a point off the grid renders some of its pixel columns one device
+    /// pixel wider than others, and the pattern shifts every frame — the sprite visibly
+    /// shimmers and crawls as it runs. Rounding the centre to whole device pixels keeps
+    /// every source pixel the same size from frame to frame.
+    ///
+    /// This snaps to *device* pixels, which keeps motion smooth. Snapping to whole
+    /// *source* pixels instead — `spriteSize.width / 16` points at a time — would give
+    /// the stepped movement of an actual NES sprite, if you want that look.
+    private func pixelSnapped(_ point: CGPoint) -> CGPoint {
+        guard displayScale > 0 else { return point }
+        return CGPoint(
+            x: (point.x * displayScale).rounded() / displayScale,
+            y: (point.y * displayScale).rounded() / displayScale
+        )
     }
 
     @ViewBuilder

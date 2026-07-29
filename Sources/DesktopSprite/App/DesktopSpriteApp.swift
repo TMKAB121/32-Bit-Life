@@ -32,16 +32,32 @@ private struct MenuBarContent: View {
 
     @ObservedObject var appDelegate: AppDelegate
     @ObservedObject private var registry: SpriteActionRegistry
+    @ObservedObject private var loginItem: LoginItemController
 
     @MainActor
     init(appDelegate: AppDelegate) {
         // Property wrappers must be initialised through their underscored storage.
         _appDelegate = ObservedObject(wrappedValue: appDelegate)
         _registry = ObservedObject(wrappedValue: appDelegate.actionRegistry)
+        _loginItem = ObservedObject(wrappedValue: appDelegate.loginItem)
     }
 
     var body: some View {
         Toggle("Show Sprite", isOn: $appDelegate.isSpriteVisible)
+
+        // A plain binding rather than `@Published var isEnabled` with a `didSet`:
+        // registration can land on `.requiresApproval` instead of `.enabled`, so the
+        // toggle must reflect what the system actually did, not what was asked for.
+        Toggle("Open at Login", isOn: Binding(
+            get: { loginItem.isEnabled },
+            set: { loginItem.setEnabled($0) }
+        ))
+
+        if loginItem.requiresApproval {
+            Button("Approve in System Settings…") {
+                loginItem.openSystemSettings()
+            }
+        }
 
         Divider()
 

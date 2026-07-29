@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     let configuration = SpriteConfiguration.default
     let actionRegistry = SpriteActionRegistry()
+    let loginItem = LoginItemController()
     private(set) lazy var viewModel = SpriteViewModel(
         configuration: configuration,
         actionRegistry: actionRegistry
@@ -67,6 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     /// This app has no windows to reopen; the sprite is always there.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         false
+    }
+
+    /// Clicking the menu-bar item activates the app, which makes this a convenient
+    /// moment to pick up any login-item change the user made in System Settings.
+    func applicationDidBecomeActive(_ notification: Notification) {
+        loginItem.refresh()
     }
 
     // MARK: - Actions

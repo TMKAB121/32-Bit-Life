@@ -96,7 +96,8 @@ Actions/
   SpriteAction.swift       Protocol + registry.
   BuiltInActions.swift     Sound, notification, open-link, and a logging template.
 Support/
-  ScreenGeometry.swift     Screen selection and coordinate conversion.
+  ScreenGeometry.swift       Screen selection and coordinate conversion.
+  LoginItemController.swift  SMAppService wrapper for "Open at Login".
 ```
 
 ---
@@ -129,6 +130,14 @@ states on every tick.
 **`.interpolation(.none)` is required.** Without it, a 16×16 sprite scaled to 64×64 on
 a Retina display is smeared into a blur. Both the CGImage (`shouldInterpolate: false`)
 and the SwiftUI `Image` set it.
+
+**Position is snapped to the physical pixel grid.** Nearest-neighbour scaling alone is
+not enough. The view model advances position by `speed × delta`, which lands the sprite
+on fractional point values; at 4× scale that makes some pixel columns render one device
+pixel wider than others, with the pattern shifting every frame. The result is a sprite
+that shimmers and crawls as it moves. `DesktopSpriteView.pixelSnapped(_:)` rounds the
+centre to whole device pixels using `@Environment(\.displayScale)`, so it stays correct
+when the window moves between a Retina and a non-Retina display.
 
 **One timer, two rates.** A single tick drives physics, cursor sampling and frame
 advance. It runs at 60 Hz while anything is happening and drops to 12 Hz once the sprite
@@ -208,6 +217,27 @@ Add a matching row to your sprite sheet, or a pose to `PlaceholderSprite`.
 
 ---
 
+## Launch at login
+
+The menu bar has an **Open at Login** toggle, backed by `SMAppService` (macOS 13+,
+no helper target required — it replaced the old `SMLoginItemSetEnabled` bundle dance).
+
+**This cannot be meaningfully tested from Xcode.** `SMAppService` registers *the path
+the app currently occupies*, and running from Xcode that path is inside DerivedData,
+which gets wiped on the next clean build. Registration appears to succeed and then
+silently stops working. To actually test it: Product ▸ Archive, export the app, move it
+to `/Applications`, and toggle it there.
+
+Registration can also land in `.requiresApproval` rather than `.enabled` — macOS puts
+it there when the user has previously disabled the item in System Settings. The menu
+shows an **Approve in System Settings…** shortcut when that happens.
+
+Every failure is logged and swallowed. Failing to become a login item is a
+disappointment, not a reason for a background app to misbehave at launch. Check
+Console.app for the `LoginItem` category if the toggle does not stick.
+
+---
+
 ## Sandboxing
 
 The app runs inside the App Sandbox and none of the built-in actions need an exception.
@@ -239,9 +269,14 @@ the first build is yours. Beyond "it launches", here is what is worth checking:
 5. **Toggle Dock auto-hide, then change the Dock size.** The strip re-anchors each time.
 6. **Switch Spaces, then open a full-screen app.** The sprite follows and stays visible.
 7. **Leave it alone for a minute** and watch it in Activity Monitor. CPU should drop
-   noticeably as the tick throttles from 60 Hz to 12 Hz.
+   noticeably as the tick throttles from 60 Hz to 12 Hz. (This is the design intent,
+   not a measured figure — the throttle has never been profiled.)
 8. **Plug in a second display**, or change resolution. The sprite stays on the primary
    screen and stays inside its bounds.
+9. **Watch the sprite closely while it runs.** Pixels should stay crisp and uniform.
+   Shimmering or pixel columns changing width means `pixelSnapped(_:)` is not doing
+   its job.
+10. **Open at Login** — only testable from `/Applications`, see above.
 
 ---
 
@@ -256,3 +291,18 @@ the first build is yours. Beyond "it launches", here is what is worth checking:
   frames; add them as frames 0–2 and give the state `loops: false`.
 - Physics are deliberately minimal: one axis of gravity, no collision with anything but
   the ground line and the screen edges.
+- **Nothing persists.** Sprite visibility and the chosen default action reset on every
+  launch. Only the login item survives, because macOS stores that itself.
+- **A click can be dropped in one narrow case.** The `ignoresMouseEvents` flip happens
+  on the tick, which is 83 ms while dormant. Moving the cursor from outside the 50-point
+  proximity radius onto the sprite and clicking within that window sends the click to
+  the desktop instead. Approaching at any normal speed restores the 60 Hz tick first.
+- **The sprite appears in screenshots and screen shares.** Setting
+  `window.sharingType = .none` in `SpriteWindow` excludes it from capture while leaving
+  it visible to you.
+- **Reduced motion is not honoured.** A perpetually moving object in peripheral vision
+  is a real accessibility problem. Checking
+  `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion` and suppressing the wander
+  — keeping only cursor reactions — would address it.
+- **A global hide/show hotkey would need Accessibility permission.** Mouse monitoring
+  does not, but keyboard monitoring does, which changes the app's install story.
