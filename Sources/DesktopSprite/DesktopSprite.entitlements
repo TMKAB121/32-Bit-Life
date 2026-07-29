@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		The prototype runs fine inside the App Sandbox. Nothing it does needs an
+		exception: reading NSEvent.mouseLocation, floating a window, playing a system
+		sound, and posting a local notification are all permitted.
+
+		NSWorkspace.open works under the sandbox for registered URL schemes such as
+		http, https and mailto. Launching an arbitrary .app by file path does NOT —
+		if you add an action that needs to do that, set this key to <false/>.
+	-->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+</dict>
+</plist>
