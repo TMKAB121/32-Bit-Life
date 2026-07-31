@@ -33,12 +33,24 @@ Choose **Move to Trash**, not "Remove Reference".
 
 ### 3. Add the sources
 
-Drag the `Sources/DesktopSprite` folder from Finder into the Xcode project navigator.
-In the dialog that appears:
+Drag the `Sources/DesktopSprite` folder from Finder into the Xcode project navigator,
+then — **this is the step that matters** — tell Xcode not to copy the files:
 
-- ☑ **Copy items if needed** — leave *unchecked* so the files stay in Git where they are.
-- Select **Create groups**.
-- ☑ Add to target **DesktopSprite**.
+- **Xcode 16 and later:** set **Action** to **Reference files in place**.
+  The default is *Copy files to destination*; do not leave it there.
+- **Xcode 15 and earlier:** leave **Copy items if needed** *unchecked*.
+- Either way, tick the **DesktopSprite** target.
+
+If the `Groups` dropdown offers a folder-synchronized option, prefer it — Xcode will
+then pick up files added on disk automatically, instead of you re-adding them by hand
+after every `git pull` that introduces a new source file.
+
+> **Why this matters.** Copying puts a second set of sources inside the project folder,
+> and Xcode compiles *those*. Your edits and any `git pull` then go to the repo copy
+> while the build silently keeps using the stale one — so fixes appear to have no
+> effect and errors look unfixable. If you suspect this has happened, select any source
+> file, open the File Inspector (⌥⌘1), and check that **Full Path** points inside the
+> Git repository and not inside the `.xcodeproj`'s folder.
 
 > **Then remove `Info.plist` and `DesktopSprite.entitlements` from Build Phases ▸
 > Copy Bundle Resources.** Dragging the folder in adds them as bundle resources, but
@@ -53,9 +65,15 @@ In the target's **Build Settings**, set:
 | Setting | Value |
 |---|---|
 | macOS Deployment Target | `13.0` or later |
-| Info.plist File | `Sources/DesktopSprite/Info.plist` |
-| Code Signing Entitlements | `Sources/DesktopSprite/DesktopSprite.entitlements` |
+| Info.plist File | `../Sources/DesktopSprite/Info.plist` |
+| Code Signing Entitlements | `../Sources/DesktopSprite/DesktopSprite.entitlements` |
 | Generate Info.plist File | `No` |
+
+Those two paths are relative to the **`.xcodeproj`**, not to the repository root. Xcode
+puts a new project in a subfolder named after the product — `32-Bit-Life/DesktopSprite/` —
+so reaching `32-Bit-Life/Sources/` needs the leading `../`. If you moved the project to
+the repository root instead, drop the `../`. Xcode shows the resolved path when you hover
+the value, which is the quickest way to confirm you got it right.
 
 `Info.plist` intentionally does not contain `LSMinimumSystemVersion` — Xcode injects
 it from the deployment target. Leave that build setting wherever you want it (13.0 or
