@@ -8,6 +8,7 @@
 //  dance in macOS 13 and needs no helper target at all.
 //
 
+import Combine
 import ServiceManagement
 import os
 

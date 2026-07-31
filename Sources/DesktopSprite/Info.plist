@@ -13,7 +13,7 @@
 	<key>CFBundleName</key>
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
-	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
@@ -30,8 +30,14 @@
 	<key>LSUIElement</key>
 	<true/>
 
-	<key>LSMinimumSystemVersion</key>
-	<string>13.0</string>
+	<!--
+		LSMinimumSystemVersion is deliberately absent. Xcode injects it from the
+		target's MACOSX_DEPLOYMENT_TARGET build setting at build time; hardcoding it
+		here means two sources of truth that warn whenever they disagree.
+
+		Set the minimum version in Build Settings ▸ macOS Deployment Target.
+		The code requires 13.0 or later.
+	-->
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSPrincipalClass</key>

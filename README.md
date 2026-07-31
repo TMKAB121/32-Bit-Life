@@ -40,9 +40,11 @@ In the dialog that appears:
 - Select **Create groups**.
 - ☑ Add to target **DesktopSprite**.
 
-Xcode will try to add `Info.plist` and `DesktopSprite.entitlements` as compiled
-resources. Remove both from **Build Phases ▸ Copy Bundle Resources** — they are
-referenced by build settings, not copied.
+> **Then remove `Info.plist` and `DesktopSprite.entitlements` from Build Phases ▸
+> Copy Bundle Resources.** Dragging the folder in adds them as bundle resources, but
+> they are referenced by build settings and must not be copied. If you skip this you
+> get the warning *"The Copy Bundle Resources build phase contains this target's
+> Info.plist file"* — that is this step.
 
 ### 4. Build settings
 
@@ -50,10 +52,14 @@ In the target's **Build Settings**, set:
 
 | Setting | Value |
 |---|---|
-| macOS Deployment Target | `13.0` |
+| macOS Deployment Target | `13.0` or later |
 | Info.plist File | `Sources/DesktopSprite/Info.plist` |
 | Code Signing Entitlements | `Sources/DesktopSprite/DesktopSprite.entitlements` |
 | Generate Info.plist File | `No` |
+
+`Info.plist` intentionally does not contain `LSMinimumSystemVersion` — Xcode injects
+it from the deployment target. Leave that build setting wherever you want it (13.0 or
+newer); nothing needs to be kept in sync by hand.
 
 If you would rather keep Xcode's generated Info.plist, skip the plist rows above and
 instead go to **Build Settings**, search for `LSUIElement`, and set

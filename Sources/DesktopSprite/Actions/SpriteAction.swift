@@ -9,6 +9,7 @@
 //  click handler and the menu bar both read from the registry.
 //
 
+import Combine
 import Foundation
 
 /// Something the companion can do when clicked or when chosen from the menu bar.
