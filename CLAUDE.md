@@ -1,0 +1,146 @@
+# CLAUDE.md
+
+Working reference for this repo. The `README.md` is the user-facing guide (Xcode setup,
+design rationale, customising); this file is the short version plus the things that will
+bite you when extending the sprite.
+
+## What this is
+
+A macOS desktop companion (`LSUIElement` background agent, no Dock icon): a 16×16 pixel
+sprite living in a transparent full-width strip above the Dock. It wanders on its own,
+reacts to the cursor, and fires small macOS actions when clicked. Menu-bar item is the
+only UI and the only way to quit.
+
+AppKit + SwiftUI. Swift, no third-party dependencies, no test target. macOS 13+.
+
+## Build & run
+
+Xcode is installed but `xcode-select` points at CommandLineTools, so use the full path:
+
+```bash
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project DesktopSprite/DesktopSprite.xcodeproj -scheme DesktopSprite -configuration Debug build
+```
+
+To launch the built app:
+
+```bash
+open ~/Library/Developer/Xcode/DerivedData/DesktopSprite-*/Build/Products/Debug/DesktopSprite.app
+```
+
+Quit it from the 🎮 menu-bar item — there is no Dock icon and no `⌘Q` outside that menu.
+
+Logs go to the unified log under subsystem `com.thirtytwobitlife.desktopsprite`
+(categories: `AppDelegate`, `SpriteViewModel`, `SpriteSheet`, `LoginItem`):
+
+```bash
+log stream --predicate 'subsystem == "com.thirtytwobitlife.desktopsprite"' --level debug
+```
+
+**The `.xcodeproj` is not folder-synchronized.** All 16 Swift files are listed
+individually in `project.pbxproj`. A new source file added on disk will *not* be
+compiled until it is added to the target in Xcode — the symptom is "cannot find X in
+scope" for a type you can plainly see in the repo.
+
+## Layout
+
+```
+Sources/DesktopSprite/
+  App/          Entry point, AppDelegate (owns everything), the NSPanel
+  Model/        SpriteConfiguration (all tunables), SpriteState (the state machine)
+  ViewModel/    SpriteViewModel (the tick loop), MouseTracker (proximity)
+  Rendering/    SpriteProvider protocol, placeholder pixel art, sheet loader, the View
+  Actions/      SpriteAction protocol + registry, built-in actions
+  Support/      ScreenGeometry (coordinates), LoginItemController (SMAppService)
+DesktopSprite/DesktopSprite.xcodeproj    Target references ../Sources; do not copy sources in
+```
+
+Ownership flows one way: `AppDelegate` → `SpriteViewModel` → (`MouseTracker`,
+`SpriteActionRegistry`). `AppDelegate` conforms to `SpriteHost`, which is the only way
+the view model touches the window — it holds no `NSWindow` reference.
+
+## The tick loop
+
+One `Timer` on `RunLoop.main` in `.common` mode drives everything.
+`SpriteViewModel.tick()` runs these stages in order, and order matters:
+
+1. `sampleCursor()` — one `NSEvent.mouseLocation` read, converted to local coords
+2. `updateClickThrough()` — flips `ignoresMouseEvents` on the window
+3. `reactToCursor()` — startle / surprised / settle back to idle
+4. `updateWander()` — the autonomous AI, suppressed while reacting or airborne
+5. `updatePhysics()` — gravity, horizontal movement, edge turnaround
+6. `advanceFrame()` — animation frame clock
+7. `refreshPublishedPosition()`
+8. `updateTickRate()` — 60 Hz active, 12 Hz after 3s idle-and-alone
+
+New per-frame behaviour goes in as a stage here, not as a second timer.
+
+## Invariants — do not break these
+
+- **Click-through.** The strip spans the full screen width. `ignoresMouseEvents` is
+  `true` except while the cursor is inside the sprite's box. Anything that makes the
+  window permanently interactive swallows every desktop click along the bottom edge.
+- **Everything is `@MainActor`.** There is no concurrency here beyond the run-loop
+  timer, deliberately. `MainActor.assumeIsolated` is used in the timer and notification
+  callbacks because main-thread delivery is already guaranteed.
+- **`@Published` writes only on change.** `advanceFrame` and `refreshPublishedPosition`
+  both guard on inequality; assigning the same value 60×/sec re-renders for nothing.
+- **All transitions go through `transition(to:force:)`.** That single funnel is what
+  makes `SpriteState.minimumDuration` mean anything. `force: true` is for physics- and
+  user-driven changes (jump, landing, edge turnaround) only.
+- **Pixel crispness needs three things:** `shouldInterpolate: false` on the CGImage,
+  `.interpolation(.none)` on the SwiftUI `Image`, and `pixelSnapped(_:)` on the
+  position. Drop any one and the sprite blurs or shimmers as it moves.
+- **Coordinate systems.** AppKit global is bottom-left origin, +Y up. SwiftUI local is
+  top-left origin, +Y down. Every crossing goes through `ScreenGeometry.globalToLocal`.
+  Inside the view model, local Y grows downward: `altitude` is *subtracted* to go up.
+- **No hard-coded numbers outside `SpriteConfiguration`.** Speeds, distances, durations,
+  frame rates, sizes all live there.
+
+## Extending it
+
+**Add an animation state** — add a case to `SpriteState`, then fill in all four
+switches (`animation`, `minimumDuration`, `impliedFacing`, `allowsWandering`). They are
+exhaustive, so the compiler lists what you owe. The tick loop needs no change. Then add
+a pose to `PlaceholderSprite.Poses` and wire it into the `frames` dictionary — its frame
+count must match `animation.frameCount`, and if a sprite sheet is in use it needs a new
+row in the same `allCases` order.
+
+**Add an action** — conform to `SpriteAction` (id, title, systemImage, `perform()`),
+register it in `AppDelegate.registerActions()`. It appears in the menu bar
+automatically. `actionRegistry.defaultActionID` picks what a click on the sprite fires.
+`LogAction` in `BuiltInActions.swift` is the minimal template.
+
+**Add artwork** — see the README. Drop a `SpriteSheet.png` (rows = states in
+`allCases` order, columns = frames) into the bundle and `SpriteProviderFactory` picks it
+up at launch with no code change; it falls back to the placeholder art on any problem.
+Author facing **right** — the view mirrors for leftward movement.
+
+**Tune the feel** — `SpriteConfiguration.swift`, nothing else.
+
+## Conventions
+
+- Every file opens with a header comment saying what it is *for*, and doc comments
+  explain **why** a decision was made, not what the code does. This is the house style
+  and it is unusually heavy — match it. Several of these comments are load-bearing
+  (they record traps that cost real debugging time).
+- British spelling in comments (`behaviour`, `rasterised`, `initialisation`).
+- `// MARK: -` section dividers in every file over ~50 lines.
+- Failures in optional subsystems (sprite sheet, login item) are logged and swallowed,
+  never fatal. A background app the user can barely see must not crash or trap.
+
+## Known rough edges
+
+- `README.md` is stale in two places: it says there is no `.xcodeproj` (one is now
+  committed) and that the project has never been compiled (it builds and runs). The
+  setup instructions are still useful history but no longer the path to a build.
+- Deployment target in the project is **13.5**, not the 13.0 the README states.
+- Three different names are in play: repo `32-Bit-Life`, target/product `DesktopSprite`,
+  bundle id `sayge.dev.DesktopSprite`, log subsystem `com.thirtytwobitlife.desktopsprite`.
+  A rename touches: the file-header comment in all 16 sources, `MenuBarExtra` title and
+  the Quit button in `DesktopSpriteApp.swift`, the notification action text in
+  `BuiltInActions.swift`, four `Logger(subsystem:)` literals, `PRODUCT_BUNDLE_IDENTIFIER`
+  and the target/scheme names in the project, the `Sources/DesktopSprite/` directory,
+  and the README.
+- Nothing persists across launches except the login item (macOS stores that itself).
+  Sprite visibility and the chosen default action reset every time.
+- Primary display only; single axis of gravity; reduced-motion is not honoured.
