@@ -19,15 +19,16 @@ struct SpriteConfiguration {
 
     /// On-screen size of the sprite, in points.
     ///
-    /// The placeholder art is a 16×16 pixel grid, so multiples of 16 keep pixels
-    /// perfectly square (64 = 4× scale).
-    var spriteSize = CGSize(width: 64, height: 64)
+    /// Keep this an integer multiple of the source artwork's pixel grid, or whole
+    /// source pixels land on fractional point boundaries and the sprite shimmers as
+    /// it moves. 128 is 8× the 16×16 placeholder art and 4× a 32×32 sprite sheet.
+    var spriteSize = CGSize(width: 96, height: 96)
 
     /// Extra headroom above the sprite's resting position, in points.
     ///
     /// The floating window is `spriteSize.height + jumpClearance` tall so that a
     /// jump does not get clipped by the top of the window.
-    var jumpClearance: CGFloat = 48
+    var jumpClearance: CGFloat = 90
 
     /// Vertical nudge applied to the whole strip, in points.
     ///
@@ -41,7 +42,7 @@ struct SpriteConfiguration {
     // MARK: - Motion
 
     /// Horizontal running speed, in points per second.
-    var runSpeed: CGFloat = 90
+    var runSpeed: CGFloat = 160
 
     /// Downward acceleration applied while airborne, in points per second squared.
     var gravity: CGFloat = 1400
@@ -50,22 +51,22 @@ struct SpriteConfiguration {
     ///
     /// Peak height is roughly `jumpVelocity² / (2 × gravity)`. With the defaults
     /// that is about 45 points, which fits inside `jumpClearance`.
-    var jumpVelocity: CGFloat = 360
+    var jumpVelocity: CGFloat = 450
 
     // MARK: - Cursor proximity
 
     /// Distance at which the sprite notices the cursor, in points.
-    var proximityEnterDistance: CGFloat = 50
+    var proximityEnterDistance: CGFloat = 60
 
     /// Distance at which the sprite stops paying attention, in points.
     ///
     /// This is deliberately larger than ``proximityEnterDistance``. The gap between
     /// the two is hysteresis: without it, a cursor resting exactly on the threshold
     /// would flip the sprite between `.idle` and `.surprised` on every single tick.
-    var proximityExitDistance: CGFloat = 80
+    var proximityExitDistance: CGFloat = 70
 
     /// Distance at which the sprite is startled into a hop, in points.
-    var startleDistance: CGFloat = 24
+    var startleDistance: CGFloat = 3
 
     // MARK: - Wander behaviour
 
@@ -102,7 +103,7 @@ struct SpriteConfiguration {
     var spriteSheetAssetName = "SpriteSheet"
 
     /// Size of a single frame within the sprite sheet, in *pixels*.
-    var spriteSheetFrameSize = CGSize(width: 16, height: 16)
+    var spriteSheetFrameSize = CGSize(width: 32, height: 32)
 
     // MARK: - Derived values
 

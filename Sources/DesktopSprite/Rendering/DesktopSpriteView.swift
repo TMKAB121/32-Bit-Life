@@ -42,9 +42,6 @@ struct DesktopSpriteView: View {
                 .onTapGesture {
                     viewModel.handleTap()
                 }
-                // Artwork is drawn facing right; mirror it for leftward movement
-                // rather than authoring a second set of frames.
-                .scaleEffect(x: viewModel.facing == .right ? 1 : -1, y: 1)
                 .position(pixelSnapped(viewModel.spriteCenter))
         }
         .ignoresSafeArea()

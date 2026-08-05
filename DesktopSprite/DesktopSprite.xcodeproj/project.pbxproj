@@ -23,6 +23,7 @@
 		1B5F5730301C36F00097E205 /* DesktopSpriteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F570D301C36F00097E205 /* DesktopSpriteApp.swift */; };
 		1B5F5731301C36F00097E205 /* SpriteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5717301C36F00097E205 /* SpriteSheet.swift */; };
 		1B5F5732301C36F00097E205 /* LoginItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5719301C36F00097E205 /* LoginItemController.swift */; };
+		1B817B383022DDC800E2E7B9 /* SpriteSheet.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B817B363022DDC800E2E7B9 /* SpriteSheet.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -43,6 +44,7 @@
 		1B5F571A301C36F00097E205 /* ScreenGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometry.swift; sourceTree = "<group>"; };
 		1B5F571C301C36F00097E205 /* MouseTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseTracker.swift; sourceTree = "<group>"; };
 		1B5F571D301C36F00097E205 /* SpriteViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteViewModel.swift; sourceTree = "<group>"; };
+		1B817B363022DDC800E2E7B9 /* SpriteSheet.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SpriteSheet.png; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -139,6 +141,7 @@
 				1B5F5718301C36F00097E205 /* Rendering */,
 				1B5F571B301C36F00097E205 /* Support */,
 				1B5F571E301C36F00097E205 /* ViewModel */,
+				1B817B373022DDC800E2E7B9 /* Resources */,
 			);
 			path = DesktopSprite;
 			sourceTree = "<group>";
@@ -151,6 +154,14 @@
 			name = Sources;
 			path = ../Sources;
 			sourceTree = SOURCE_ROOT;
+		};
+		1B817B373022DDC800E2E7B9 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1B817B363022DDC800E2E7B9 /* SpriteSheet.png */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
@@ -213,6 +224,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1B817B383022DDC800E2E7B9 /* SpriteSheet.png in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
