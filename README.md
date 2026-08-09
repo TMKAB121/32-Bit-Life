@@ -216,8 +216,9 @@ build it. To replace it with real artwork:
    To use a different name or frame size, change `spriteSheetAssetName` /
    `spriteSheetFrameSize` in `SpriteConfiguration.swift`.
 
-Author facing **right**. `runningLeft` has its own row, so left-facing frames are drawn
-rather than mirrored; the sprite's `facing` is used only to flip companion-effect anchors.
+Author facing **right**. Whether a clip is flipped when the sprite faces left is a per-clip
+decision (`"mirrors": true` in the manifest), so a directional animation can either be
+drawn twice — `runningLeft` gets its own row — or drawn once and mirrored.
 
 ### The animation manifest
 
@@ -253,6 +254,27 @@ The file is optional — without it the app animates from the five clips above.
 it and a clip can live on a sheet of its own. `frames` may be given to override the count
 derived from the pixels, but it is rarely needed. The five built-in clips are always
 present; listing one here retunes it rather than replacing the set.
+
+**`"mirrors": true`** flips a clip horizontally when the sprite faces left. Set it on
+anything drawn in one direction only — most flourishes, and almost every effect. Without
+it a shot authored pointing right flies leftwards still pointing right, which reads as the
+sprite firing backwards.
+
+It is off by default rather than on, because flipping is not always what you want: art can
+be symmetric, or deliberately always face the viewer, or have its own drawn left-hand row.
+For an effect the decision is made when it spawns, so a shot already in flight keeps
+pointing the way it was fired even if the sprite turns around behind it.
+
+This is also how to get one run cycle instead of two — point both running clips at the
+same row and let the left one flip:
+
+```json
+{ "id": "runningRight", "sheet": "SpriteSheet", "row": 1, "fps": 10, "loops": true },
+{ "id": "runningLeft",  "sheet": "SpriteSheet", "row": 1, "fps": 10, "loops": true, "mirrors": true }
+```
+
+The two *states* stay as they are — they carry the direction of travel, which the physics
+reads — but the artwork collapses to one row.
 
 **Flourishes** are clips the sprite performs of its own accord — a wave, a stretch, a
 charge-up. They must be non-looping, because a flourish ends when its animation does.

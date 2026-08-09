@@ -126,6 +126,11 @@ final class SpriteViewModel: ObservableObject {
     /// Seconds into the active flourish.
     private var flourishElapsed: TimeInterval = 0
 
+    /// Whether the active clip was started by a click rather than by the wander AI.
+    ///
+    /// Previews are exempt from cursor cancellation; see ``performClip(_:isPreview:)``.
+    private var isPreviewingClip = false
+
     /// Effects belonging to the active flourish that have not reached their trigger yet.
     private var pendingSpawns: [EffectSpawn] = []
 
@@ -218,10 +223,25 @@ final class SpriteViewModel: ObservableObject {
 
     /// Handles a click on the sprite.
     ///
-    /// Plays a bounce and fires the registry's default action.
+    /// Plays a bounce — or, if `clickClipID` is set, the clip being worked on — and fires
+    /// the registry's default action either way.
     func handleTap() {
         Self.logger.debug("Sprite tapped.")
-        beginJump()
+
+        if let id = configuration.clickClipID {
+            if let clip = catalogue[id] {
+                performClip(clip, isPreview: true)
+            } else {
+                // Worth an error rather than a silent fallback to jumping: a typo in the
+                // clip name is the likeliest cause, and a sprite that jumps instead of
+                // performing looks like the clip itself is broken.
+                Self.logger.error("clickClipID '\(id.rawValue, privacy: .public)' is not in the catalogue; jumping instead.")
+                beginJump()
+            }
+        } else {
+            beginJump()
+        }
+
         actionRegistry.performDefaultAction()
     }
 
@@ -318,6 +338,12 @@ final class SpriteViewModel: ObservableObject {
             }
             return
         }
+
+        // A click preview owns the sprite until it has played out. Without this the
+        // cursor that did the clicking is still sitting on the sprite on the next tick,
+        // well inside the startle distance, so every preview would be accompanied by a
+        // jump — and the clip under test would play while the sprite was airborne.
+        guard !isPreviewingClip else { return }
 
         // A very close cursor startles the sprite into a hop — but only once per
         // approach. Without the latch it would hop over and over for as long as the
@@ -439,6 +465,7 @@ final class SpriteViewModel: ObservableObject {
         guard flourishElapsed >= clip.duration else { return }
 
         activeFlourish = nil
+        isPreviewingClip = false
         flourishElapsed = 0
         pendingSpawns = []
         // Effects deliberately survive: a struck block keeps wobbling after the character
@@ -554,6 +581,18 @@ final class SpriteViewModel: ObservableObject {
         activeFlourish ?? catalogue.clip(for: state)
     }
 
+    /// Whether the body artwork should be drawn flipped this frame.
+    ///
+    /// Derived rather than published: both of its inputs — ``facing`` and ``clipID`` — are
+    /// `@Published`, so the view already re-renders whenever the answer can change.
+    ///
+    /// Note this is *not* the same question `runningLeft` answers. That clip has its own
+    /// drawn row and reports `mirrors == false`; this is for the one-directional clips,
+    /// which is most flourishes.
+    var isMirrored: Bool {
+        facing == .left && (currentClip?.mirrors ?? false)
+    }
+
     /// Rolls for a flourish and starts one if the dice and the cooldowns allow.
     ///
     /// Three gates, narrowest first, because the cheap ones should reject most calls:
@@ -571,13 +610,29 @@ final class SpriteViewModel: ObservableObject {
         }
         guard let chosen = weightedChoice(from: eligible) else { return false }
 
-        activeFlourish = chosen
-        flourishElapsed = 0
-        pendingSpawns = chosen.effects
-        lastFlourish[chosen.id] = clock
-        lastAnyFlourish = clock
-        Self.logger.debug("Performing flourish '\(chosen.id.rawValue, privacy: .public)'.")
+        performClip(chosen, isPreview: false)
         return true
+    }
+
+    /// Starts a clip playing, ignoring every cooldown.
+    ///
+    /// The single funnel for both entry points: the wander AI, which has already done its
+    /// gating by the time it gets here, and a click, which deliberately has none.
+    ///
+    /// - Parameter isPreview: Marks a clip started by a click, which the cursor is not
+    ///   allowed to interrupt. Without this a preview would be cancelled on the very next
+    ///   tick, since the cursor is by definition resting on the sprite when you click it.
+    private func performClip(_ clip: AnimationClip, isPreview: Bool) {
+        isPreviewingClip = false  // Let `cancelFlourish` clear whatever was running.
+        cancelFlourish()
+
+        activeFlourish = clip
+        isPreviewingClip = isPreview
+        flourishElapsed = 0
+        pendingSpawns = clip.effects
+        lastFlourish[clip.id] = clock
+        lastAnyFlourish = clock
+        Self.logger.debug("Performing '\(clip.id.rawValue, privacy: .public)'\(isPreview ? " (click preview)" : "", privacy: .public).")
     }
 
     /// Abandons the active flourish and the decoration attached to it.
@@ -589,7 +644,7 @@ final class SpriteViewModel: ObservableObject {
     /// is its own object, and yanking it out of the air because the user happened to move
     /// the cursor looks like a rendering glitch rather than a reaction.
     private func cancelFlourish() {
-        guard activeFlourish != nil else { return }
+        guard activeFlourish != nil, !isPreviewingClip else { return }
         activeFlourish = nil
         flourishElapsed = 0
         pendingSpawns = []
@@ -686,7 +741,8 @@ final class SpriteViewModel: ObservableObject {
                     height: spawn.acceleration.dy * scale
                 ),
                 lifetime: lifetime,
-                size: effectSize(for: clip)
+                size: effectSize(for: clip),
+                mirrored: clip.mirrors && facing == .left
             )
         )
     }
@@ -729,7 +785,8 @@ final class SpriteViewModel: ObservableObject {
                     frame: effect.frameIndex,
                     position: effect.position,
                     size: effectSize(for: effect.clip),
-                    z: effect.z
+                    z: effect.z,
+                    mirrored: effect.mirrored
                 )
             }
         // Same rule as everywhere else here: publish only on a real change. `elapsed`

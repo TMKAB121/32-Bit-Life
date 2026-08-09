@@ -181,6 +181,21 @@ struct AnimationClip {
     /// flourish, reports itself finished.
     let loops: Bool
 
+    /// Whether this artwork should be flipped horizontally when the sprite faces left.
+    ///
+    /// Set it on any clip drawn in one direction only — most flourishes, and almost every
+    /// companion effect. Without it a shot authored pointing right flies leftwards still
+    /// pointing right, which reads as the sprite firing backwards.
+    ///
+    /// Off by default, because the alternative is not always wrong: `runningLeft` has its
+    /// own drawn row and must never be flipped, and some art is symmetric or deliberately
+    /// always faces the viewer. Opting in per clip keeps that a decision rather than a
+    /// surprise.
+    ///
+    /// For an effect the flip is decided when it spawns, so a shot already in flight keeps
+    /// pointing the way it was fired even if the sprite turns around behind it.
+    let mirrors: Bool
+
     /// Present if the sprite may perform this clip spontaneously.
     let flourish: FlourishRule?
 
@@ -203,6 +218,7 @@ struct AnimationClip {
         frameCount: Int,
         framesPerSecond: Double,
         loops: Bool,
+        mirrors: Bool = false,
         flourish: FlourishRule? = nil,
         effects: [EffectSpawn] = []
     ) {
@@ -212,6 +228,7 @@ struct AnimationClip {
         self.frameCount = max(frameCount, 1)
         self.framesPerSecond = framesPerSecond
         self.loops = loops
+        self.mirrors = mirrors
         self.flourish = flourish
         self.effects = effects
     }
@@ -302,6 +319,7 @@ struct AnimationCatalogue {
                 frameCount: clip.frameCount,
                 framesPerSecond: clip.framesPerSecond,
                 loops: clip.loops,
+                mirrors: clip.mirrors,
                 flourish: nil,
                 effects: clip.effects
             )
@@ -417,6 +435,8 @@ struct AnimationManifest: Decodable {
         let frames: Int?
         let fps: Double?
         let loops: Bool?
+        /// Flip the artwork when the sprite faces left. See ``AnimationClip/mirrors``.
+        let mirrors: Bool?
         let flourish: Flourish?
         let effects: [Effect]?
     }
@@ -563,6 +583,7 @@ extension AnimationCatalogue {
                 frameCount: frameCount,
                 framesPerSecond: entry.fps ?? existing?.framesPerSecond ?? 10,
                 loops: loops,
+                mirrors: entry.mirrors ?? existing?.mirrors ?? false,
                 flourish: flourish,
                 effects: effects
             )
@@ -618,6 +639,12 @@ struct ActiveEffect {
     /// measure without going back to the catalogue every tick.
     let size: CGSize
 
+    /// Whether to draw this effect flipped.
+    ///
+    /// Captured at spawn rather than read from the sprite each tick: a shot already in
+    /// flight should keep pointing the way it was fired, even if the sprite turns around.
+    let mirrored: Bool
+
     /// Whether this effect moves independently of the sprite.
     var travels: Bool {
         velocity != .zero || acceleration != .zero
@@ -661,4 +688,5 @@ struct EffectRender: Equatable, Identifiable {
     let position: CGPoint
     let size: CGSize
     let z: Int
+    let mirrored: Bool
 }

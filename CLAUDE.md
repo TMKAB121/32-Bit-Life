@@ -165,8 +165,9 @@ automatically. `actionRegistry.defaultActionID` picks what a click on the sprite
 
 **Add artwork** — see the README. Drop a `SpriteSheet.png` into the bundle and
 `SpriteProviderFactory` picks it up at launch with no code change; it falls back to the
-placeholder art on any problem. Author facing **right**. `runningLeft` has its own row,
-so `facing` is used only to mirror companion-effect anchors — nothing mirrors the body.
+placeholder art on any problem. Author facing **right** and set `"mirrors": true` on any
+clip that should flip when the sprite faces left — that is per-clip and off by default, so
+a clip with its own drawn left row (like `runningLeft`, if you keep one) is never flipped.
 
 **Tune the feel** — `SpriteConfiguration.swift`, nothing else.
 

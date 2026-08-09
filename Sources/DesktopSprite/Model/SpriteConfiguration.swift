@@ -96,6 +96,21 @@ struct SpriteConfiguration {
     /// this only decides how eagerly the sprite reaches for whatever is available.
     var flourishProbability: Double = 0.35
 
+    /// Clip played when the sprite is clicked, instead of the usual jump.
+    ///
+    /// A development affordance. Waiting out a 45-second cooldown to see whether the
+    /// anchor on an effect is a few pixels off is a miserable way to draw, so point this
+    /// at whatever you are working on and click it as often as you like:
+    ///
+    /// ```swift
+    /// var clickClipID: ClipID? = ClipID("fire")
+    /// ```
+    ///
+    /// Cooldowns are ignored, the cursor does not interrupt it (it is by definition
+    /// resting on the sprite when you click), and the clip plays exactly one pass whether
+    /// or not it loops. Set back to `nil` to restore the jump.
+    var clickClipID: ClipID? = ClipID("fire")
+
     /// Minimum seconds between any two flourishes, whatever their individual cooldowns.
     ///
     /// Per-clip cooldowns stop one animation repeating; this stops six *different*

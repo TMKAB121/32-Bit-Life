@@ -69,6 +69,9 @@ struct DesktopSpriteView: View {
                     .interpolation(.none)
                     .antialiased(false)
                     .frame(width: render.size.width, height: render.size.height)
+                    // Decided when the effect spawned, not read live: a shot in flight
+                    // keeps pointing the way it was fired even if the sprite turns.
+                    .scaleEffect(x: render.mirrored ? -1 : 1, y: 1)
                     .allowsHitTesting(false)
                     .position(pixelSnapped(render.position))
             }
@@ -105,6 +108,10 @@ struct DesktopSpriteView: View {
                 // a blurry smudge; nearest-neighbour keeps the pixels square.
                 .interpolation(.none)
                 .antialiased(false)
+                // A clean −1 about the centre, so no pixel is resampled and the art stays
+                // as crisp flipped as it is unflipped. Only clips that opt in are flipped;
+                // `runningLeft` has its own drawn row and must never be.
+                .scaleEffect(x: viewModel.isMirrored ? -1 : 1, y: 1)
         } else {
             // Last-resort marker so a broken provider is visible rather than silent.
             Rectangle()

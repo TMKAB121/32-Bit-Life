@@ -73,8 +73,9 @@ struct PlaceholderSprite: SpriteProvider {
 /// Legend: `.` transparent · `K` outline · `S` skin · `R` cap/shirt ·
 /// `B` overalls · `Y` hair/shoes · `W` eye highlight.
 ///
-/// Every grid is exactly 16 rows of 16 characters. All poses face **right**;
-/// ``DesktopSpriteView`` mirrors them horizontally for leftward movement.
+/// Every grid is exactly 16 rows of 16 characters. All poses face **right**. Nothing here
+/// is flipped — `runningLeft` reuses the same grids and the built-in clips do not set
+/// `mirrors`. Flipping is opt-in per clip in the manifest; see ``AnimationClip/mirrors``.
 private enum Poses {
 
     /// Neutral standing pose.

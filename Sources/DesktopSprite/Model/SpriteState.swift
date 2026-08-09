@@ -12,8 +12,9 @@ import Foundation
 
 /// Which way the sprite is looking.
 ///
-/// Artwork is authored facing right and mirrored horizontally for `.left`, so a
-/// sprite sheet only ever needs one set of directional frames.
+/// Artwork is authored facing right. Whether it is flipped for `.left` is a per-clip
+/// decision — see ``AnimationClip/mirrors`` — so a directional animation can either be
+/// drawn twice or drawn once and mirrored.
 enum SpriteFacing {
     case left
     case right
