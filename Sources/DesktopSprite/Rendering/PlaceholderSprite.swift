@@ -9,7 +9,12 @@
 //  Running reuses the standing pose as its "passing" frame, which is the classic
 //  four-frame walk cycle trick: contact, pass, contact, pass.
 //
-//  To replace this with real artwork, see `SpriteSheet.swift` and the README —
+//  This covers the five behaviour clips and nothing else. Flourishes and companion
+//  effects are sheet-only by design — they are described in a manifest that ships
+//  alongside artwork, and there is no point hand-authoring fallback poses for animations
+//  the user invented. ``SpriteProviderFactory`` prunes any flourish this file cannot draw.
+//
+//  To replace this with real artwork, see `SpriteSheetLibrary.swift` and the README —
 //  you should not need to touch this file.
 //
 
@@ -21,7 +26,7 @@ import SwiftUI
 /// is just a dictionary lookup.
 struct PlaceholderSprite: SpriteProvider {
 
-    private let frames: [SpriteState: [Image]]
+    private let frames: [ClipID: [Image]]
 
     init() {
         let stand = Self.render(Poses.stand)
@@ -31,23 +36,29 @@ struct PlaceholderSprite: SpriteProvider {
         let jump = Self.render(Poses.jump)
         let shock = Self.render(Poses.shock)
 
-        // Frame counts here must match `SpriteState.animation.frameCount`.
+        // Frame counts here must match the fallback table in
+        // `AnimationCatalogue.builtInClips` — that table is what the catalogue uses when
+        // there is no sheet to derive counts from, which is exactly when this art is in play.
         let running = [runA, stand, runB, stand].compactMap { $0 }
 
         frames = [
-            .idle: [stand, blink].compactMap { $0 },
-            .runningRight: running,
-            .runningLeft: running,
-            .surprised: [shock, stand].compactMap { $0 },
-            .jumping: [jump].compactMap { $0 }
+            SpriteState.idle.clipID: [stand, blink].compactMap { $0 },
+            SpriteState.runningRight.clipID: running,
+            SpriteState.runningLeft.clipID: running,
+            SpriteState.surprised.clipID: [shock, stand].compactMap { $0 },
+            SpriteState.jumping.clipID: [jump].compactMap { $0 }
         ]
     }
 
-    func image(for state: SpriteState, frame: Int) -> Image? {
-        guard let states = frames[state], !states.isEmpty else { return nil }
+    func image(for clip: ClipID, frame: Int) -> Image? {
+        guard let images = frames[clip], !images.isEmpty else { return nil }
         // Wrapping rather than trapping: the frame clock and the artwork can briefly
-        // disagree on the tick a state changes.
-        return states[frame % states.count]
+        // disagree on the tick a clip changes.
+        return images[frame % images.count]
+    }
+
+    func hasArtwork(for clip: ClipID) -> Bool {
+        frames[clip]?.isEmpty == false
     }
 
     private static func render(_ rows: [String]) -> Image? {

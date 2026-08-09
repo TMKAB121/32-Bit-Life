@@ -36,23 +36,46 @@ Logs go to the unified log under subsystem `com.thirtytwobitlife.desktopsprite`
 log stream --predicate 'subsystem == "com.thirtytwobitlife.desktopsprite"' --level debug
 ```
 
-**The `.xcodeproj` is not folder-synchronized.** All 16 Swift files are listed
-individually in `project.pbxproj`. A new source file added on disk will *not* be
-compiled until it is added to the target in Xcode — the symptom is "cannot find X in
-scope" for a type you can plainly see in the repo.
+**The `.xcodeproj` is not folder-synchronized.** All 17 Swift files are listed
+individually in `project.pbxproj`, as are the two files in `Resources/`. A new source
+file added on disk will *not* be compiled until it is added to the target in Xcode — the
+symptom is "cannot find X in scope" for a type you can plainly see in the repo. A new
+*resource* fails more quietly: `Animations.json` not added to the Resources build phase
+does not break the build, it just silently falls back to the built-in animation defaults.
+The loader logs the absent-manifest case explicitly so this is diagnosable.
 
 ## Layout
 
 ```
 Sources/DesktopSprite/
   App/          Entry point, AppDelegate (owns everything), the NSPanel
-  Model/        SpriteConfiguration (all tunables), SpriteState (the state machine)
+  Model/        SpriteConfiguration (all tunables), SpriteState (the behaviour machine),
+                AnimationClip (clip data, manifest decoding, the catalogue)
   ViewModel/    SpriteViewModel (the tick loop), MouseTracker (proximity)
-  Rendering/    SpriteProvider protocol, placeholder pixel art, sheet loader, the View
+  Rendering/    SpriteProvider protocol, placeholder pixel art, SpriteSheetLibrary, the View
   Actions/      SpriteAction protocol + registry, built-in actions
   Support/      ScreenGeometry (coordinates), LoginItemController (SMAppService)
+  Resources/    SpriteSheet.png, Animations.json (the manifest; optional)
 DesktopSprite/DesktopSprite.xcodeproj    Target references ../Sources; do not copy sources in
 ```
+
+## States vs clips
+
+These are deliberately separate concepts and conflating them is the main way to make a
+mess here.
+
+- **`SpriteState`** is *behaviour*: five cases, code-driven, exhaustive switches. What the
+  sprite is doing and what it is allowed to do next.
+- **`AnimationClip`** is *animation data*: which sheet row, how fast, does it loop, what
+  does it drag along with it. Clips are declared in `Resources/Animations.json`, named
+  rather than numbered, and their **frame counts are read out of the artwork** — trailing
+  transparent cells in a row are not frames.
+
+A state maps to a clip through `SpriteState.clipID`, which works off the enum's raw value
+and is deliberately not a switch. Clips can exist that no state maps to — flourishes and
+the companion effects they spawn — which is the whole point of the split. The catalogue
+is built once at launch by `SpriteProviderFactory.bestAvailable` and is the sole authority
+on frame counts, rates and looping.
 
 Ownership flows one way: `AppDelegate` → `SpriteViewModel` → (`MouseTracker`,
 `SpriteActionRegistry`). `AppDelegate` conforms to `SpriteHost`, which is the only way
@@ -65,14 +88,23 @@ One `Timer` on `RunLoop.main` in `.common` mode drives everything.
 
 1. `sampleCursor()` — one `NSEvent.mouseLocation` read, converted to local coords
 2. `updateClickThrough()` — flips `ignoresMouseEvents` on the window
-3. `reactToCursor()` — startle / surprised / settle back to idle
-4. `updateWander()` — the autonomous AI, suppressed while reacting or airborne
+3. `reactToCursor()` — startle / surprised / settle back to idle; cancels any flourish
+4. `updateWander()` — the autonomous AI, suppressed while reacting or airborne; this is
+   where a flourish is rolled for
 5. `updatePhysics()` — gravity, horizontal movement, edge turnaround
-6. `advanceFrame()` — animation frame clock
-7. `refreshPublishedPosition()`
-8. `updateTickRate()` — 60 Hz active, 12 Hz after 3s idle-and-alone
+6. `syncClip()` — publishes the clip to draw, resetting the frame clock when it changes
+7. `advanceFrame()` — animation frame clock, driven by the catalogue's frame count
+8. `updateEffects()` — spawns effects whose trigger has been reached, integrates the
+   travelling ones, retires the finished and the off-screen
+9. `updateFlourish()` — retires a flourish once its clip has played out
+10. `refreshPublishedPosition()`
+11. `updateTickRate()` — 60 Hz active, 12 Hz after 3s idle-and-alone
 
 New per-frame behaviour goes in as a stage here, not as a second timer.
+
+Stages 8 and 9 are in that order on purpose: `updateFlourish` discards anything still
+pending when it retires a clip, so an effect triggered on the clip's *last* frame would
+never spawn if they were swapped.
 
 ## Invariants — do not break these
 
@@ -94,26 +126,47 @@ New per-frame behaviour goes in as a stage here, not as a second timer.
   top-left origin, +Y down. Every crossing goes through `ScreenGeometry.globalToLocal`.
   Inside the view model, local Y grows downward: `altitude` is *subtracted* to go up.
 - **No hard-coded numbers outside `SpriteConfiguration`.** Speeds, distances, durations,
-  frame rates, sizes all live there.
+  frame rates, sizes all live there. Per-clip animation numbers are the one exception and
+  they live in `Animations.json`, not in Swift.
+- **Frame counts are never declared in code.** They come from the artwork. The only
+  hard-coded counts are the fallback table in `AnimationCatalogue.builtInClips`, used when
+  there is no sheet to read — keep it in step with `PlaceholderSprite`.
+- **Flourish time is measured on the accumulated tick delta, not `Date`.** This process
+  runs for days across sleep, wake, and clock corrections; wall-clock arithmetic would
+  either suppress every flourish or fire them all at once.
+- **Effects never take hit tests.** They are decoration drawn over a full-width strip; one
+  that accepted clicks would hand the strip back its ability to swallow desktop clicks.
+- **Every effect must have an ending.** Lifetime, animation length, or leaving the strip —
+  one of the three always applies (see `ActiveEffect.isFinished` and the lifetime default
+  in `spawnEffect`). A looping effect with no way to die pins the app at 60 Hz forever.
+- **Travelling effects integrate velocity before position**, matching the order
+  `updatePhysics` uses for the sprite. Mixing the two orders makes an effect and the
+  sprite fall at visibly different rates from the same acceleration.
 
 ## Extending it
 
-**Add an animation state** — add a case to `SpriteState`, then fill in all four
-switches (`animation`, `minimumDuration`, `impliedFacing`, `allowsWandering`). They are
-exhaustive, so the compiler lists what you owe. The tick loop needs no change. Then add
-a pose to `PlaceholderSprite.Poses` and wire it into the `frames` dictionary — its frame
-count must match `animation.frameCount`, and if a sprite sheet is in use it needs a new
-row in the same `allCases` order.
+**Add an animation** — no Swift. Draw a row, add a clip to `Resources/Animations.json`
+naming its sheet and row. Frame count comes from the pixels. Give it a `flourish` rule
+and the sprite performs it spontaneously; hang `effects` off it for companion animations.
+See the README for the full schema.
+
+**Add an animation *state*** — only when you need new *behaviour*, not just a new
+animation. Add a case to `SpriteState`, then fill in the three switches
+(`minimumDuration`, `impliedFacing`, `allowsWandering`). They are exhaustive, so the
+compiler lists what you owe. The tick loop needs no change. The case's raw value is its
+clip name, so give it a manifest entry under that name; without a sheet you also need a
+pose in `PlaceholderSprite`, whose frame counts must match the fallback table in
+`AnimationCatalogue.builtInClips`.
 
 **Add an action** — conform to `SpriteAction` (id, title, systemImage, `perform()`),
 register it in `AppDelegate.registerActions()`. It appears in the menu bar
 automatically. `actionRegistry.defaultActionID` picks what a click on the sprite fires.
 `LogAction` in `BuiltInActions.swift` is the minimal template.
 
-**Add artwork** — see the README. Drop a `SpriteSheet.png` (rows = states in
-`allCases` order, columns = frames) into the bundle and `SpriteProviderFactory` picks it
-up at launch with no code change; it falls back to the placeholder art on any problem.
-Author facing **right** — the view mirrors for leftward movement.
+**Add artwork** — see the README. Drop a `SpriteSheet.png` into the bundle and
+`SpriteProviderFactory` picks it up at launch with no code change; it falls back to the
+placeholder art on any problem. Author facing **right**. `runningLeft` has its own row,
+so `facing` is used only to mirror companion-effect anchors — nothing mirrors the body.
 
 **Tune the feel** — `SpriteConfiguration.swift`, nothing else.
 

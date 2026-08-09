@@ -30,6 +30,11 @@ struct DesktopSpriteView: View {
             Color.clear
                 .allowsHitTesting(false)
 
+            // Effects behind the sprite, then the sprite, then effects in front. The
+            // view model publishes them already sorted by `z`, so this is a partition
+            // rather than a sort.
+            effectLayers(viewModel.effects.filter { $0.z < 0 })
+
             sprite
                 .frame(
                     width: viewModel.configuration.spriteSize.width,
@@ -43,8 +48,31 @@ struct DesktopSpriteView: View {
                     viewModel.handleTap()
                 }
                 .position(pixelSnapped(viewModel.spriteCenter))
+
+            effectLayers(viewModel.effects.filter { $0.z >= 0 })
         }
         .ignoresSafeArea()
+    }
+
+    /// Draws companion animations — a struck block, a charge glow, a puff of dust.
+    ///
+    /// Note what is deliberately absent: any gesture. Effects are decoration and must
+    /// never take hit tests, or a large one would hand the full-width strip back the
+    /// ability to swallow desktop clicks — the exact problem `ignoresMouseEvents` exists
+    /// to solve.
+    @ViewBuilder
+    private func effectLayers(_ renders: [EffectRender]) -> some View {
+        ForEach(renders) { render in
+            if let image = provider.image(for: render.clip, frame: render.frame) {
+                image
+                    .resizable()
+                    .interpolation(.none)
+                    .antialiased(false)
+                    .frame(width: render.size.width, height: render.size.height)
+                    .allowsHitTesting(false)
+                    .position(pixelSnapped(render.position))
+            }
+        }
     }
 
     /// Rounds a point onto the physical pixel grid.
@@ -69,7 +97,7 @@ struct DesktopSpriteView: View {
 
     @ViewBuilder
     private var sprite: some View {
-        if let image = provider.image(for: viewModel.state, frame: viewModel.frameIndex) {
+        if let image = provider.image(for: viewModel.clipID, frame: viewModel.frameIndex) {
             image
                 .resizable()
                 // Both of these matter for pixel art. Without `.interpolation(.none)`

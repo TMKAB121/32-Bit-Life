@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "sheets": {
+    "SpriteSheet": { "frameSize": [32, 32] }
+  },
+  "clips": [
+    { "id": "idle",         "sheet": "SpriteSheet", "row": 0, "fps": 2.5, "loops": true },
+    { "id": "runningRight", "sheet": "SpriteSheet", "row": 1, "fps": 10,  "loops": true },
+    { "id": "runningLeft",  "sheet": "SpriteSheet", "row": 2, "fps": 10,  "loops": true },
+    { "id": "surprised",    "sheet": "SpriteSheet", "row": 3, "fps": 6,   "loops": true },
+    { "id": "jumping",      "sheet": "SpriteSheet", "row": 4, "fps": 1,   "loops": false }
+  ]
+}

@@ -106,16 +106,21 @@ App/
   SpriteWindow.swift       The transparent NSPanel and its hosting view.
 Model/
   SpriteConfiguration.swift  Every tunable number in the app.
-  SpriteState.swift          The state machine: states, animations, transition rules.
+  SpriteState.swift          The behaviour machine: states and transition rules.
+  AnimationClip.swift        Clips, effects, flourishes; the manifest and the catalogue.
 ViewModel/
-  SpriteViewModel.swift    The tick loop: physics, wander AI, reactions, throttling.
+  SpriteViewModel.swift    The tick loop: physics, wander AI, reactions, flourishes,
+                           effects, throttling.
   MouseTracker.swift       Cursor proximity, with hysteresis.
 Rendering/
   SpriteProvider.swift     Protocol seam between behaviour and artwork.
   PlaceholderSprite.swift  Built-in pixel art, authored as character grids.
   PixelArt.swift           Character grid → CGImage.
-  SpriteSheet.swift        PNG sprite sheet → per-state frames.
+  SpriteSheetLibrary.swift PNG sheets → per-clip frames, counts derived from the pixels.
   DesktopSpriteView.swift  The SwiftUI view. No logic — it reads and draws.
+Resources/
+  SpriteSheet.png          The artwork.
+  Animations.json          The manifest. Optional; see "The animation manifest".
 Actions/
   SpriteAction.swift       Protocol + registry.
   BuiltInActions.swift     Sound, notification, open-link, and a logging template.
@@ -183,11 +188,9 @@ in the app hard-codes a number.
 The app ships with programmatic pixel art so it looks like something the moment you
 build it. To replace it with real artwork:
 
-1. Author a PNG laid out as **one row per state, one column per frame**, in the order
-   `SpriteState.allCases` declares — idle, runningRight, runningLeft, surprised, jumping.
-   Frame counts come from `SpriteState.animation.frameCount`:
+1. Author a PNG laid out as **one row per clip, one column per frame**:
 
-   | Row | State | Frames |
+   | Row | Clip | Frames |
    |---|---|---|
    | 0 | idle | 2 |
    | 1 | runningRight | 4 |
@@ -195,22 +198,114 @@ build it. To replace it with real artwork:
    | 3 | surprised | 2 |
    | 4 | jumping | 1 |
 
-   At the default 16×16 frame size that is a 64×80 pixel image. Rows may be shorter
-   than the widest row; trailing cells are never read.
+   **Frame counts are read from the artwork, not declared anywhere.** Trailing
+   transparent cells in a row are not frames, so rows may be as short as they like — draw
+   a third idle pose into row 0 and the idle animation becomes three frames with no other
+   change. A transparent cell in the *middle* of a row is respected as a real frame, so
+   blink-off and flicker gaps work.
+
+   At the default 32×32 frame size the table above is a 128×160 pixel image.
 
 2. Name it `SpriteSheet.png` and add it to the target — either into `Assets.xcassets`
    or directly as a file resource. Both are checked.
 
 3. Build. That is all: `SpriteProviderFactory` looks for the asset at launch and uses
-   it if it is there, falling back to the placeholder art if it is missing or the wrong
-   size. **No code changes are needed.**
+   it if it is there, falling back to the placeholder art if it is missing or unreadable.
+   **No code changes are needed.**
 
    To use a different name or frame size, change `spriteSheetAssetName` /
    `spriteSheetFrameSize` in `SpriteConfiguration.swift`.
 
-Artwork should face **right**; the view mirrors it horizontally for leftward movement.
-If you would rather author separate left-facing frames, drop the `.scaleEffect` in
-`DesktopSpriteView.swift` and give `runningLeft` its own row.
+Author facing **right**. `runningLeft` has its own row, so left-facing frames are drawn
+rather than mirrored; the sprite's `facing` is used only to flip companion-effect anchors.
+
+### The animation manifest
+
+Everything past the five built-in clips is data. Drop an `Animations.json` into the
+bundle beside the PNG and you can add animations, extra sheets, spontaneous flourishes
+and companion effects **without touching Swift at all**.
+
+The file is optional — without it the app animates from the five clips above.
+
+```json
+{
+  "version": 1,
+  "sheets": {
+    "SpriteSheet": { "frameSize": [32, 32] },
+    "Effects":     { "frameSize": [32, 32] }
+  },
+  "clips": [
+    { "id": "idle", "sheet": "SpriteSheet", "row": 0, "fps": 2.5, "loops": true },
+
+    { "id": "charge", "sheet": "SpriteSheet", "row": 5, "fps": 8, "loops": false,
+      "flourish": { "cooldown": 45, "weight": 1 },
+      "effects": [
+        { "clip": "chargeShot", "trigger": { "onFrame": 3 },
+          "anchor": [12, -8], "velocity": [120, 0], "z": 1 }
+      ] },
+
+    { "id": "chargeShot", "sheet": "Effects", "row": 0, "fps": 12, "loops": true }
+  ]
+}
+```
+
+**Clips.** `row` is stated explicitly, so adding a clip never renumbers the rows beneath
+it and a clip can live on a sheet of its own. `frames` may be given to override the count
+derived from the pixels, but it is rarely needed. The five built-in clips are always
+present; listing one here retunes it rather than replacing the set.
+
+**Flourishes** are clips the sprite performs of its own accord — a wave, a stretch, a
+charge-up. They must be non-looping, because a flourish ends when its animation does.
+`cooldown` is the minimum gap between two performances of *that* clip; `weight` biases
+the pick when several are eligible. Two more knobs live in `SpriteConfiguration.swift`:
+`flourishProbability` (how eagerly the sprite reaches for one) and `flourishSpacing`
+(the floor between *any* two flourishes, so several coming off cooldown together do not
+fire back to back). A flourish only ever starts from a standing idle, and the cursor
+arriving — or a click — abandons it immediately.
+
+**Effects** are companion animations attached to a clip: the block Mario headbutts, the
+glow around a charged shot.
+
+- `trigger` — `{"onFrame": 3}`, `{"afterDelay": 0.25}`, or omitted for "on start".
+- `anchor` — `[x, y]` from the centre of the sprite, in **source pixels** so the number
+  survives a change to `spriteSize`. `+y` is down. Mirrored when the sprite faces left.
+- `follows` — `true` (default) rides along with the sprite; `false` pins it where it was
+  born. This is the whole Mario/Mega Man difference: a struck block stays put while the
+  character falls away from it.
+- `velocity` — `[x, y]` in source pixels per second. Anything non-zero makes the effect
+  travel under its own steam, and `follows` is then ignored. Mirrored with facing, so one
+  declaration fires left when the sprite faces left.
+- `acceleration` — `[x, y]` in source pixels per second squared. Velocity plus
+  acceleration is what turns a flat shot into a tossed coin: give it an upward velocity
+  and a downward acceleration and it arcs.
+- `lifetime` — seconds before it disappears, whatever its animation is doing.
+- `z` — draw order; the sprite is `0`, so negative draws behind it.
+
+**How long an effect lives**, in the order the rules apply: an explicit `lifetime` always
+wins; otherwise a non-looping clip lasts exactly as long as its animation; a looping clip
+that travels lives until it leaves the strip; and a looping clip that stays put plays
+through once. There is no way to author an effect that never goes away.
+
+That second rule is the one that catches people out with projectiles. A two-frame clip at
+8 fps lasts 0.25 seconds, so a shot with a long, graceful arc will vanish a quarter of a
+second after it is fired unless you either loop the clip or give it a `lifetime`.
+
+Effects outlive the flourish that spawned them if it ends naturally. If it is *interrupted*
+— the cursor arrives, or you click — attached effects are cleared with it, but anything
+already travelling is left to fly on, since a projectile that has left the character is its
+own object by then.
+
+If an effect is drawn far above the sprite, raise `effectClearance` in
+`SpriteConfiguration.swift` — the strip is the only canvas, and anything taller than it is
+simply clipped.
+
+Every failure here is survivable and logged: a missing manifest falls back to the
+built-ins, a malformed one does the same, and a single clip naming a missing sheet or an
+empty row is dropped while the rest keep working. Watch for it with:
+
+```bash
+log stream --predicate 'subsystem == "com.thirtytwobitlife.desktopsprite"' --level debug
+```
 
 ### Adding an action
 
@@ -235,9 +330,13 @@ Registered actions appear in the menu bar automatically. Set
 
 ### Adding a state
 
-Add a case to `SpriteState` and fill in the four switches — `animation`,
-`minimumDuration`, `impliedFacing`, `allowsWandering`. The tick loop needs no changes.
-Add a matching row to your sprite sheet, or a pose to `PlaceholderSprite`.
+Most new animations do **not** need a state — if the sprite should simply perform
+something now and then, add a clip with a `flourish` rule to the manifest and stop there.
+
+A state is for new *behaviour*: something the sprite enters and leaves under its own
+rules. Add a case to `SpriteState` and fill in the three switches — `minimumDuration`,
+`impliedFacing`, `allowsWandering` — then give it a row in the manifest under the same
+name as the case. The tick loop needs no changes.
 
 ---
 

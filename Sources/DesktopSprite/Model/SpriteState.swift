@@ -19,31 +19,18 @@ enum SpriteFacing {
     case right
 }
 
-// MARK: - Animation descriptor
-
-/// Describes how a single state animates.
-struct SpriteAnimation {
-
-    /// Number of frames in the cycle. Must be at least 1.
-    let frameCount: Int
-
-    /// Playback rate, in frames per second.
-    let framesPerSecond: Double
-
-    /// When `true` the animation wraps around; when `false` it holds on the last frame.
-    let loops: Bool
-
-    /// Seconds each frame is on screen.
-    var frameDuration: TimeInterval { 1.0 / max(framesPerSecond, 0.001) }
-}
-
 // MARK: - State
 
-/// The sprite's animation state.
+/// The sprite's behaviour state.
 ///
-/// Each case carries its own animation and its own transition rules, so adding a
-/// new state is a matter of adding a case and filling in the two switches below —
-/// no changes to the view model's tick loop are required.
+/// Each case carries its own transition rules, so adding a new state is a matter of
+/// adding a case and filling in the switches below — no changes to the view model's
+/// tick loop are required.
+///
+/// Note what is *not* here any more: how a state animates. Frame counts, rates and
+/// looping now live in ``AnimationCatalogue``, keyed by ``clipID`` and ultimately read
+/// out of the artwork itself. A state is a behaviour; a clip is a piece of animation;
+/// and clips are free to exist that no state ever transitions to.
 enum SpriteState: String, CaseIterable {
     case idle
     case runningRight
@@ -51,21 +38,12 @@ enum SpriteState: String, CaseIterable {
     case surprised
     case jumping
 
-    /// The animation played while in this state.
-    var animation: SpriteAnimation {
-        switch self {
-        case .idle:
-            return SpriteAnimation(frameCount: 2, framesPerSecond: 2.5, loops: true)
-        case .runningRight, .runningLeft:
-            return SpriteAnimation(frameCount: 4, framesPerSecond: 10, loops: true)
-        case .surprised:
-            return SpriteAnimation(frameCount: 2, framesPerSecond: 6, loops: true)
-        case .jumping:
-            // Jumping is a single held pose; its duration is governed by physics,
-            // not by the frame clock.
-            return SpriteAnimation(frameCount: 1, framesPerSecond: 1, loops: false)
-        }
-    }
+    /// The clip played while in this state.
+    ///
+    /// Free of charge, because the raw values were already written as clip names. This
+    /// is deliberately *not* a switch: a fifth exhaustive switch to maintain would have
+    /// undercut the point of moving animation data out of this enum in the first place.
+    var clipID: ClipID { ClipID(rawValue) }
 
     /// The shortest time this state is allowed to stay on screen, in seconds.
     ///

@@ -36,6 +36,14 @@ struct SpriteConfiguration {
     /// is the line directly above the Dock. Positive values lift it higher.
     var bottomInset: CGFloat = 0
 
+    /// Extra headroom reserved for companion effects, in points.
+    ///
+    /// Effects are drawn relative to the sprite and routinely sit above its head — a
+    /// struck block, a puff of dust, a charge glow. The strip is the only canvas there
+    /// is, so anything taller than `jumpClearance` allows would simply be clipped off
+    /// the top of the window with no other symptom.
+    var effectClearance: CGFloat = 40
+
     /// Horizontal padding kept between the sprite and the edges of the screen.
     var edgeMargin: CGFloat = 12
 
@@ -79,6 +87,22 @@ struct SpriteConfiguration {
     /// Probability that a wander decision results in running rather than idling.
     var runProbability: Double = 0.6
 
+    // MARK: - Flourishes
+
+    /// Probability that a wander decision performs a flourish, when one is off cooldown.
+    ///
+    /// Checked before the run/idle roll, so this is the share of *all* wander decisions,
+    /// not of the leftovers. Keep it low: the per-clip cooldown is the real governor, and
+    /// this only decides how eagerly the sprite reaches for whatever is available.
+    var flourishProbability: Double = 0.35
+
+    /// Minimum seconds between any two flourishes, whatever their individual cooldowns.
+    ///
+    /// Per-clip cooldowns stop one animation repeating; this stops six *different*
+    /// animations coming off cooldown together and firing back to back, which reads as
+    /// the sprite having a fit rather than a personality.
+    var flourishSpacing: TimeInterval = 12.0
+
     // MARK: - Tick rates
 
     /// Tick interval used while the sprite is moving or reacting.
@@ -103,12 +127,29 @@ struct SpriteConfiguration {
     var spriteSheetAssetName = "SpriteSheet"
 
     /// Size of a single frame within the sprite sheet, in *pixels*.
+    ///
+    /// Used for the default sheet and as the fallback for any sheet the manifest does not
+    /// give an explicit size. Frame *counts* are not declared anywhere — they are read
+    /// from the artwork. See ``SpriteSheetLibrary``.
     var spriteSheetFrameSize = CGSize(width: 32, height: 32)
+
+    /// Name of the JSON animation manifest to look for in the app bundle.
+    ///
+    /// Optional. Without it the app animates from the built-in five-clip defaults; with
+    /// it, clips, sheets, flourishes and companion effects are all data. See `README.md`.
+    var animationManifestName = "Animations"
 
     // MARK: - Derived values
 
     /// Total height of the floating window.
-    var stripHeight: CGFloat { spriteSize.height + jumpClearance }
+    var stripHeight: CGFloat { spriteSize.height + jumpClearance + effectClearance }
+
+    /// How many points one source pixel occupies on screen.
+    ///
+    /// The conversion factor between artwork space and screen space, and the reason
+    /// companion-effect anchors are authored in source pixels: an anchor of "ten pixels
+    /// to the right" keeps meaning the same thing when ``spriteSize`` changes.
+    var pointsPerSourcePixel: CGFloat { spriteSize.width / max(spriteSheetFrameSize.width, 1) }
 
     static let `default` = SpriteConfiguration()
 }
