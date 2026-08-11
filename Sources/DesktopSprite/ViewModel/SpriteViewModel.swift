@@ -44,21 +44,31 @@ final class SpriteViewModel: ObservableObject {
 
     // MARK: Published state
 
-    /// The current animation state.
+    /// The current behaviour state.
     @Published private(set) var state: SpriteState = .idle
 
-    /// The frame index within the current state's animation.
+    /// The clip currently being drawn.
+    ///
+    /// Usually the current state's clip, but a flourish overlays its own animation while
+    /// leaving the state alone — the sprite is still, behaviourally, idling.
+    @Published private(set) var clipID: ClipID = SpriteState.idle.clipID
+
+    /// The frame index within the current clip.
     @Published private(set) var frameIndex: Int = 0
 
     /// The centre of the sprite, in the window's SwiftUI coordinate space.
     @Published private(set) var spriteCenter: CGPoint = .zero
 
-    /// Which way the sprite is looking. Drives the horizontal mirror in the view.
+    /// Which way the sprite is looking. Mirrors companion-effect anchors.
     @Published private(set) var facing: SpriteFacing = .right
+
+    /// Companion animations currently on screen, in draw order.
+    @Published private(set) var effects: [EffectRender] = []
 
     // MARK: Collaborators
 
     let configuration: SpriteConfiguration
+    let catalogue: AnimationCatalogue
     private let actionRegistry: SpriteActionRegistry
     private let mouseTracker: MouseTracker
     weak var host: SpriteHost?
@@ -74,11 +84,53 @@ final class SpriteViewModel: ObservableObject {
     /// Vertical velocity, in points per second. Positive is upward.
     private var verticalVelocity: CGFloat = 0
 
+    /// Horizontal velocity owed to a moving clip, in points per second. Positive is right.
+    ///
+    /// Kept apart from the running states rather than folded into them, because the two have
+    /// different owners: running is a *behaviour* travelling at one global `runSpeed`, this is
+    /// a *clip* travelling at a speed it authored for itself. They never overlap —
+    /// `updatePhysics` gives this one priority — and keeping them separate is what lets a
+    /// leap ignore the edge turnaround that running depends on.
+    private var horizontalVelocity: CGFloat = 0
+
+    /// Points of authored travel still owed, or `nil` when the motion is uncapped.
+    private var motionRemaining: CGFloat?
+
+    /// The motion currently carrying the sprite, or `nil` when nothing is.
+    ///
+    /// Deliberately stored rather than derived from `isAirborne`. An ordinary startle jump is
+    /// airborne too, and every guard hanging off this one needs to mean "a clip is moving the
+    /// sprite", not "the sprite is off the ground" — deriving it would quietly change how a
+    /// plain jump interacts with click previews and with cursor cancellation.
+    private var activeMotion: SpriteMotion?
+
+    /// The active clip's motion, while it is still waiting for its trigger.
+    private var pendingMotion: SpriteMotion?
+
+    /// The direction ``pendingMotion`` resolved to, as a multiplier on its speed.
+    ///
+    /// Resolved when the clip *starts* rather than when the motion fires, so `mirrors` artwork
+    /// faces the way it is about to travel throughout the wind-up frames instead of flipping
+    /// at the moment of push-off. A `random` direction is therefore rolled exactly once, and
+    /// effects spawned mid-clip inherit the travel direction for free — `spawnEffect` reads
+    /// `facing` when it spawns.
+    private var pendingMotionSign: CGFloat = 1
+
     /// Seconds spent in the current state, used to enforce `minimumDuration`.
     private var stateElapsed: TimeInterval = 0
 
     /// Accumulated time towards the next animation frame.
     private var frameAccumulator: TimeInterval = 0
+
+    /// Set by ``syncClip()`` when the drawn clip changes, and consumed by ``advanceFrame(delta:)``.
+    ///
+    /// A clip's frame zero has to be on screen for at least one tick. Without this it is
+    /// skipped precisely when the sprite has been dormant: the tick that starts a flourish
+    /// carries the whole 12 Hz delta with it, which is a full frame of a 12 fps clip — so the
+    /// first frame is advanced past before it has been drawn once. Spontaneous flourishes
+    /// only ever start from idle, which is exactly when dormancy is likely, so an authored
+    /// wind-up would fire its `onFrame` trigger almost immediately and almost at random.
+    private var clipDidChange = false
 
     /// Seconds until the wander AI makes its next decision.
     private var wanderCountdown: TimeInterval = 0
@@ -92,6 +144,45 @@ final class SpriteViewModel: ObservableObject {
     /// Last value pushed to the host, so `setClickThrough` is only called on change.
     private var lastClickThrough: Bool?
 
+    // MARK: Flourishes
+
+    /// Seconds since the tick loop started, accumulated from the per-tick delta.
+    ///
+    /// Deliberately not `Date`: this process runs for days across sleep, wake, and the
+    /// occasional clock correction, any of which would make wall-clock arithmetic jump
+    /// and either suppress every flourish or fire them all at once.
+    private var clock: TimeInterval = 0
+
+    /// When each flourish was last performed, on the ``clock`` timebase.
+    ///
+    /// Absent means "never", which reads as `0` below — so a clip's first performance is
+    /// gated by its own cooldown after launch rather than firing in the opening seconds.
+    private var lastFlourish: [ClipID: TimeInterval] = [:]
+
+    /// When *any* flourish was last performed. See `flourishSpacing`.
+    private var lastAnyFlourish: TimeInterval = 0
+
+    /// The clip being performed, or `nil` when the sprite is just being itself.
+    private var activeFlourish: AnimationClip?
+
+    /// Seconds into the active flourish.
+    private var flourishElapsed: TimeInterval = 0
+
+    /// Whether the active clip was started by a click rather than by the wander AI.
+    ///
+    /// Previews are exempt from cursor cancellation; see ``performClip(_:isPreview:)``.
+    private var isPreviewingClip = false
+
+    /// Effects belonging to the active flourish that have not reached their trigger yet.
+    private var pendingSpawns: [EffectSpawn] = []
+
+    // MARK: Effects
+
+    private var activeEffects: [ActiveEffect] = []
+
+    /// Monotonic identifier so SwiftUI can tell two effects of the same clip apart.
+    private var nextEffectID = 0
+
     // MARK: Timer
 
     private var timer: Timer?
@@ -104,8 +195,13 @@ final class SpriteViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init(configuration: SpriteConfiguration, actionRegistry: SpriteActionRegistry) {
+    init(
+        configuration: SpriteConfiguration,
+        catalogue: AnimationCatalogue,
+        actionRegistry: SpriteActionRegistry
+    ) {
         self.configuration = configuration
+        self.catalogue = catalogue
         self.actionRegistry = actionRegistry
         self.mouseTracker = MouseTracker(configuration: configuration)
         self.wanderCountdown = TimeInterval.random(in: configuration.idleDurationRange)
@@ -169,10 +265,35 @@ final class SpriteViewModel: ObservableObject {
 
     /// Handles a click on the sprite.
     ///
-    /// Plays a bounce and fires the registry's default action.
+    /// Plays a bounce — or, if `clickClipID` is set, the clip being worked on — and fires
+    /// the registry's default action either way.
     func handleTap() {
         Self.logger.debug("Sprite tapped.")
-        beginJump()
+
+        // A moving clip owns the sprite until it comes to rest. The action still fires — a
+        // click should do its job whatever the sprite happens to be up to — but the clip is
+        // left alone. This has to sit at the entry point rather than deep inside
+        // `performClip`, because a jump is the other thing a tap can do.
+        guard !isMotionActive else {
+            Self.logger.debug("Tap left the sprite alone: a clip is moving it.")
+            actionRegistry.performDefaultAction()
+            return
+        }
+
+        if let id = configuration.clickClipID {
+            if let clip = catalogue[id] {
+                performClip(clip, isPreview: true)
+            } else {
+                // Worth an error rather than a silent fallback to jumping: a typo in the
+                // clip name is the likeliest cause, and a sprite that jumps instead of
+                // performing looks like the clip itself is broken.
+                Self.logger.error("clickClipID '\(id.rawValue, privacy: .public)' is not in the catalogue; jumping instead.")
+                beginJump()
+            }
+        } else {
+            beginJump()
+        }
+
         actionRegistry.performDefaultAction()
     }
 
@@ -207,13 +328,23 @@ final class SpriteViewModel: ObservableObject {
         guard delta > 0, stripSize != .zero else { return }
 
         stateElapsed += delta
+        clock += delta
 
         let proximity = sampleCursor()
         updateClickThrough(isOverSprite: proximity.isOverSprite)
         reactToCursor(proximity)
         updateWander(delta: delta, proximity: proximity)
         updatePhysics(delta: delta, proximity: proximity)
+        syncClip()
         advanceFrame(delta: delta)
+        // Motion and effects before the flourish that owns them, and the order is
+        // load-bearing: `updateFlourish` retires a finished clip and discards anything still
+        // pending, so work triggered on the clip's *last* frame would be dropped a tick
+        // before it ever ran if these were the other way round. Both read `frameIndex`, so
+        // both must also come after `advanceFrame`.
+        startDueMotion()
+        updateEffects(delta: delta)
+        updateFlourish(delta: delta)
         refreshPublishedPosition()
         updateTickRate(delta: delta, proximity: proximity)
     }
@@ -242,6 +373,14 @@ final class SpriteViewModel: ObservableObject {
     }
 
     private func reactToCursor(_ proximity: MouseProximity) {
+        // Attention beats performance. A flourish is a private moment; the instant the
+        // cursor arrives the sprite should notice it, so the clip is abandoned rather
+        // than played out. Without this the sprite reads as unresponsive for a second or
+        // two at exactly the moment the user is trying to interact with it.
+        if proximity.isNear {
+            cancelFlourish()
+        }
+
         guard proximity.isNear else {
             // Re-arm the startle once the cursor has properly gone away.
             hasStartled = false
@@ -253,6 +392,12 @@ final class SpriteViewModel: ObservableObject {
             }
             return
         }
+
+        // A click preview owns the sprite until it has played out. Without this the
+        // cursor that did the clicking is still sitting on the sprite on the next tick,
+        // well inside the startle distance, so every preview would be accompanied by a
+        // jump — and the clip under test would play while the sprite was airborne.
+        guard !isPreviewingClip else { return }
 
         // A very close cursor startles the sprite into a hop — but only once per
         // approach. Without the latch it would hop over and over for as long as the
@@ -267,11 +412,21 @@ final class SpriteViewModel: ObservableObject {
     }
 
     private func updateWander(delta: TimeInterval, proximity: MouseProximity) {
-        // Reactions take priority over strolling around.
-        guard state.allowsWandering, !proximity.isNear, !isAirborne else { return }
+        // Reactions take priority over strolling around, and a flourish already in
+        // progress owns the sprite until it finishes or is interrupted.
+        guard state.allowsWandering, !proximity.isNear, !isAirborne, activeFlourish == nil else { return }
 
         wanderCountdown -= delta
         guard wanderCountdown <= 0 else { return }
+
+        // Checked before the run/idle roll rather than as a third outcome of it: a
+        // flourish only ever starts from a standing start, and folding it into the roll
+        // below would mean the sprite could only perform when it happened to be idle
+        // *and* happened to lose the run coin-flip.
+        if state == .idle, beginFlourishIfDue() {
+            wanderCountdown = TimeInterval.random(in: configuration.idleDurationRange)
+            return
+        }
 
         if state.isRunning || Double.random(in: 0...1) > configuration.runProbability {
             transition(to: .idle)
@@ -289,11 +444,22 @@ final class SpriteViewModel: ObservableObject {
             verticalVelocity -= configuration.gravity * CGFloat(delta)
             altitude += verticalVelocity * CGFloat(delta)
             if altitude <= 0 {
+                // `land` has just zeroed the horizontal velocity a moving clip was using;
+                // returning stops this same tick from stepping the sprite against it.
                 land(stillNear: proximity.isNear)
+                return
             }
         }
 
-        // Horizontal.
+        // Horizontal, from a moving clip. Checked before the running states and returning
+        // rather than falling through: the two can only overlap for a click preview, and an
+        // authored motion outranks the one global running speed.
+        if horizontalVelocity != 0 {
+            advanceClipMotion(delta: delta)
+            return
+        }
+
+        // Horizontal, from running.
         guard state.isRunning else { return }
         let direction: CGFloat = state == .runningRight ? 1 : -1
         let proposed = positionX + direction * configuration.runSpeed * CGFloat(delta)
@@ -307,9 +473,98 @@ final class SpriteViewModel: ObservableObject {
         }
     }
 
+    /// Steps a moving clip's horizontal travel and retires the motion once it is spent.
+    ///
+    /// The distance budget is clamped on its final step rather than allowed to overshoot and
+    /// stop on the next tick. At 60 Hz that overshoot is a couple of points; at the dormant
+    /// 12 Hz it is more than a dozen, which is the difference between a leap landing where it
+    /// was authored to and one that visibly does not.
+    private func advanceClipMotion(delta: TimeInterval) {
+        var step = horizontalVelocity * CGFloat(delta)
+        var isSpent = false
+
+        if let remaining = motionRemaining {
+            if abs(step) >= remaining {
+                step = horizontalVelocity < 0 ? -remaining : remaining
+                isSpent = true
+            } else {
+                motionRemaining = remaining - abs(step)
+            }
+        }
+
+        let proposed = positionX + step
+        let clamped = clampedX(proposed)
+        positionX = clamped
+
+        // Deliberately *not* the edge turnaround the running states use. A leap that reversed
+        // in mid-air reads as a rendering fault; hitting the edge stops the travel instead and
+        // lets the arc finish falling where it is.
+        if isSpent || clamped != proposed {
+            endClipMotion()
+        }
+    }
+
+    /// Starts the active clip's motion once its trigger has been reached.
+    ///
+    /// Split from ``beginMotion(_:)`` so the trigger test lives beside the effect one it
+    /// shares an evaluator with, and the physics lives beside the physics.
+    private func startDueMotion() {
+        guard activeFlourish != nil, let motion = pendingMotion, isDue(motion.trigger) else { return }
+        pendingMotion = nil
+        beginMotion(motion)
+    }
+
+    private func beginMotion(_ motion: SpriteMotion) {
+        let scale = configuration.pointsPerSourcePixel
+        activeMotion = motion
+        horizontalVelocity = motion.speed * scale * pendingMotionSign
+        motionRemaining = motion.distance.map { $0 * scale }
+        if motion.launch > 0 {
+            verticalVelocity = motion.launch * scale
+            altitude = 0.001  // Lift off the ground so `isAirborne` becomes true immediately.
+        }
+        // Deliberately no `transition(...)` here, unlike `beginJump`. A transition resets the
+        // frame clock, and for a motion deferred to an `onFrame` trigger that would rewind
+        // the clip to frame zero at the exact moment of push-off — the wind-up would replay
+        // under a sprite already in the air.
+        let horizontal = horizontalVelocity
+        Self.logger.debug("Motion begins: \(Int(horizontal))pt/s horizontally, launch \(Int(motion.launch * scale))pt/s.")
+    }
+
+    private func endClipMotion() {
+        horizontalVelocity = 0
+        motionRemaining = nil
+        activeMotion = nil
+    }
+
+    /// Publishes the clip that should be on screen, resetting the frame clock when it changes.
+    ///
+    /// A single funnel, for the same reason `transition(to:)` is one: a flourish starting
+    /// or ending changes the artwork without changing the state, and two places resetting
+    /// the frame clock independently is how you end up with an animation that occasionally
+    /// starts halfway through.
+    private func syncClip() {
+        let resolved = activeFlourish?.id ?? state.clipID
+        guard resolved != clipID else { return }
+        clipID = resolved
+        frameIndex = 0
+        frameAccumulator = 0
+        clipDidChange = true
+    }
+
     private func advanceFrame(delta: TimeInterval) {
-        let animation = state.animation
-        guard animation.frameCount > 1 else {
+        // A clip that has only just been swapped in shows its first frame for this tick
+        // rather than immediately swallowing the delta that carried it here. See
+        // ``clipDidChange`` — this is what makes an `onFrame` trigger mean what it says.
+        if clipDidChange {
+            clipDidChange = false
+            return
+        }
+
+        // The catalogue is the authority on frame counts, and it reads them out of the
+        // artwork. A clip with no entry means the manifest and the sheet disagree; hold
+        // on frame zero rather than dividing by a count of nothing.
+        guard let clip = currentClip, clip.frameCount > 1 else {
             if frameIndex != 0 { frameIndex = 0 }
             frameAccumulator = 0
             return
@@ -317,16 +572,16 @@ final class SpriteViewModel: ObservableObject {
 
         frameAccumulator += delta
         var index = frameIndex
-        while frameAccumulator >= animation.frameDuration {
-            frameAccumulator -= animation.frameDuration
+        while frameAccumulator >= clip.frameDuration {
+            frameAccumulator -= clip.frameDuration
             let next = index + 1
-            if next < animation.frameCount {
+            if next < clip.frameCount {
                 index = next
-            } else if animation.loops {
+            } else if clip.loops {
                 index = 0
             } else {
                 // Hold on the last frame.
-                index = animation.frameCount - 1
+                index = clip.frameCount - 1
                 frameAccumulator = 0
                 break
             }
@@ -337,10 +592,90 @@ final class SpriteViewModel: ObservableObject {
         if index != frameIndex { frameIndex = index }
     }
 
+    /// Retires a flourish once its clip has played out.
+    ///
+    /// Nothing else in the app ends a state when its animation finishes — behaviour
+    /// states end on a timer or on landing. This is the one animation-driven ending, and
+    /// it is why only non-looping clips are allowed to be flourishes.
+    private func updateFlourish(delta: TimeInterval) {
+        guard let clip = activeFlourish else { return }
+        // The accumulate happens before the hold below, not after. `flourishElapsed` is the
+        // timebase `.afterDelay` triggers are measured on, so freezing it would silently
+        // stop a touchdown effect from ever firing.
+        flourishElapsed += delta
+        guard flourishElapsed >= clip.duration else { return }
+        // A clip that moves the sprite owns it until it comes to rest. Retiring on the frame
+        // clock alone would drop the sprite into `.idle` in mid-air and play the idle
+        // animation for the rest of the arc; instead the clip holds on its last frame, which
+        // is the landing pose an artist would have drawn there anyway.
+        //
+        // `!isAirborne` as well as `!isMotionActive`, because exhausting the authored
+        // `distance` retires the motion while the sprite is still falling.
+        guard !isMotionActive, !isAirborne else { return }
+
+        activeFlourish = nil
+        isPreviewingClip = false
+        flourishElapsed = 0
+        pendingSpawns = []
+        pendingMotion = nil
+        // Effects deliberately survive: a struck block keeps wobbling after the character
+        // has finished swinging at it. Only an *interrupted* flourish takes them with it.
+        transition(to: .idle, force: true)
+    }
+
+    /// Spawns effects that have reached their trigger, advances the live ones, and drops
+    /// those that have played out.
+    private func updateEffects(delta: TimeInterval) {
+        spawnDueEffects()
+
+        guard !activeEffects.isEmpty else {
+            if !effects.isEmpty { effects = [] }
+            return
+        }
+
+        for index in activeEffects.indices {
+            activeEffects[index].elapsed += delta
+
+            if activeEffects[index].travels {
+                // Semi-implicit integration: velocity is updated before it is used, the
+                // same order `updatePhysics` uses for the sprite's own gravity. Mixing the
+                // two orders would make an effect and the sprite fall at visibly
+                // different rates from the same acceleration.
+                let acceleration = activeEffects[index].acceleration
+                activeEffects[index].velocity.width += acceleration.width * CGFloat(delta)
+                activeEffects[index].velocity.height += acceleration.height * CGFloat(delta)
+
+                let velocity = activeEffects[index].velocity
+                activeEffects[index].position.x += velocity.width * CGFloat(delta)
+                activeEffects[index].position.y += velocity.height * CGFloat(delta)
+            } else if activeEffects[index].follows {
+                activeEffects[index].position = effectPosition(offset: activeEffects[index].offset)
+            }
+        }
+        activeEffects.removeAll { effect in
+            guard effect.isFinished || hasLeftStrip(effect) else { return false }
+            // Only travelling effects are worth a line. A projectile that dies on the
+            // frame it is born — because its velocity was in the wrong units, or the
+            // strip is shorter than the author assumed — is otherwise invisible.
+            if effect.travels {
+                Self.logger.debug("Effect '\(effect.clip.id.rawValue, privacy: .public)' retired after \(effect.elapsed, format: .fixed(precision: 2))s at x \(Int(effect.position.x)), y \(Int(effect.position.y)).")
+            }
+            return true
+        }
+        refreshPublishedEffects()
+    }
+
     /// Drops to a slower tick once the sprite has been idle and alone for a while,
     /// and back to full rate the moment anything happens.
     private func updateTickRate(delta: TimeInterval, proximity: MouseProximity) {
-        let isSettled = state == .idle && !proximity.isNear && !isAirborne
+        // A flourish or a live effect counts as activity even though the sprite is
+        // standing still and alone. Throttling to 12 Hz underneath a 10 fps animation
+        // would drop roughly every other frame of it.
+        let isSettled = state == .idle
+            && !proximity.isNear
+            && !isAirborne
+            && activeFlourish == nil
+            && activeEffects.isEmpty
         dormantElapsed = isSettled ? dormantElapsed + delta : 0
 
         let interval = dormantElapsed >= configuration.dormantDelay
@@ -374,7 +709,12 @@ final class SpriteViewModel: ObservableObject {
     }
 
     private func beginJump() {
-        guard !isAirborne else { return }
+        // `!isMotionActive` as well as `!isAirborne`: a ground-level dash never leaves the
+        // floor, so the altitude test on its own would let a startle force `.jumping` on top
+        // of a clip still sliding the sprite sideways.
+        guard !isAirborne, !isMotionActive else { return }
+        // A jump is either a startle or a click. Both outrank a performance.
+        cancelFlourish()
         verticalVelocity = configuration.jumpVelocity
         altitude = 0.001  // Lift off the ground so `isAirborne` becomes true immediately.
         transition(to: .jumping, force: true)
@@ -383,12 +723,292 @@ final class SpriteViewModel: ObservableObject {
     private func land(stillNear: Bool) {
         altitude = 0
         verticalVelocity = 0
+        endClipMotion()
         transition(to: stillNear ? .surprised : .idle, force: true)
+    }
+
+    // MARK: - Flourishes
+
+    /// The clip driving the frame clock: a performance if one is running, otherwise the
+    /// state's own animation.
+    private var currentClip: AnimationClip? {
+        activeFlourish ?? catalogue.clip(for: state)
+    }
+
+    /// Whether the body artwork should be drawn flipped this frame.
+    ///
+    /// Derived rather than published: both of its inputs — ``facing`` and ``clipID`` — are
+    /// `@Published`, so the view already re-renders whenever the answer can change.
+    ///
+    /// Note this is *not* the same question `runningLeft` answers. That clip has its own
+    /// drawn row and reports `mirrors == false`; this is for the one-directional clips,
+    /// which is most flourishes.
+    var isMirrored: Bool {
+        facing == .left && (currentClip?.mirrors ?? false)
+    }
+
+    /// Rolls for a flourish and starts one if the dice and the cooldowns allow.
+    ///
+    /// Three gates, narrowest first, because the cheap ones should reject most calls:
+    /// the global spacing, the probability roll, then the per-clip cooldowns.
+    ///
+    /// - Returns: `true` if a flourish began.
+    private func beginFlourishIfDue() -> Bool {
+        guard !catalogue.flourishes.isEmpty else { return false }
+        guard clock - lastAnyFlourish >= configuration.flourishSpacing else { return false }
+        guard Double.random(in: 0...1) < configuration.flourishProbability else { return false }
+
+        let eligible = catalogue.flourishes.filter { clip in
+            guard let rule = clip.flourish else { return false }
+            return clock - (lastFlourish[clip.id] ?? 0) >= rule.cooldown
+        }
+        guard let chosen = weightedChoice(from: eligible) else { return false }
+
+        performClip(chosen, isPreview: false)
+        return true
+    }
+
+    /// Starts a clip playing, ignoring every cooldown.
+    ///
+    /// The single funnel for both entry points: the wander AI, which has already done its
+    /// gating by the time it gets here, and a click, which deliberately has none.
+    ///
+    /// - Parameter isPreview: Marks a clip started by a click, which the cursor is not
+    ///   allowed to interrupt. Without this a preview would be cancelled on the very next
+    ///   tick, since the cursor is by definition resting on the sprite when you click it.
+    private func performClip(_ clip: AnimationClip, isPreview: Bool) {
+        // `cancelFlourish` refuses to run while a clip is moving the sprite, and the two
+        // lines below rely on it having run. Without this guard the assignments would go
+        // through regardless, replacing a leap mid-arc and stranding its effects on a clip
+        // that no longer exists.
+        guard !isMotionActive else {
+            Self.logger.debug("Ignoring '\(clip.id.rawValue, privacy: .public)': a clip is already moving the sprite.")
+            return
+        }
+
+        isPreviewingClip = false  // Let `cancelFlourish` clear whatever was running.
+        cancelFlourish()
+
+        // A moving clip begins from a standstill. Left running, the sprite would keep
+        // travelling at `runSpeed` through the wind-up frames, and an edge turnaround would
+        // both flip `facing` out from under the direction resolved below and reset the frame
+        // clock, delaying the clip's own trigger. This must therefore come *before* the
+        // facing write — `.idle` has no implied facing, so it cannot clobber it.
+        if clip.motion != nil, state.isRunning {
+            transition(to: .idle, force: true)
+        }
+
+        activeFlourish = clip
+        isPreviewingClip = isPreview
+        flourishElapsed = 0
+        pendingSpawns = clip.effects
+        // A motion starting in mid-air would snap the sprite down to the ground to launch
+        // from it, since `beginMotion` has to reset `altitude` to lift off. The spontaneous
+        // path is already gated on being grounded; the click path is not, so it is gated here.
+        pendingMotion = isAirborne ? nil : clip.motion
+        if let motion = pendingMotion {
+            pendingMotionSign = motionSign(for: motion.direction)
+            let resolved: SpriteFacing = pendingMotionSign < 0 ? .left : .right
+            if facing != resolved { facing = resolved }
+        }
+        lastFlourish[clip.id] = clock
+        lastAnyFlourish = clock
+        Self.logger.debug("Performing '\(clip.id.rawValue, privacy: .public)'\(isPreview ? " (click preview)" : "", privacy: .public).")
+    }
+
+    /// Abandons the active flourish and the decoration attached to it.
+    ///
+    /// Attached effects go with it: a charge glow left hanging in the air after the sprite
+    /// has been startled away from it is worse than no effect at all.
+    ///
+    /// Effects already *travelling* are kept. Once a projectile has left the character it
+    /// is its own object, and yanking it out of the air because the user happened to move
+    /// the cursor looks like a rendering glitch rather than a reaction.
+    ///
+    /// A clip that is *moving the sprite* is likewise not cancellable. Abandoning one
+    /// mid-arc would strand the sprite in the air with velocity and no clip to explain it,
+    /// which is a far worse thing to look at than a reaction arriving a moment late. Note
+    /// the window this leaves open on purpose: a motion still waiting for its trigger has
+    /// not started yet, so an approaching cursor *can* abort a leap during its wind-up.
+    private func cancelFlourish() {
+        guard activeFlourish != nil, !isPreviewingClip, !isMotionActive else { return }
+        activeFlourish = nil
+        flourishElapsed = 0
+        pendingSpawns = []
+        pendingMotion = nil
+        activeEffects.removeAll { !$0.travels }
+    }
+
+    /// Resolves an authored direction into a multiplier on the motion's speed.
+    private func motionSign(for direction: MotionDirection) -> CGFloat {
+        switch direction {
+        case .facing: return facing == .left ? -1 : 1
+        case .left:   return -1
+        case .right:  return 1
+        case .random: return Bool.random() ? 1 : -1
+        }
+    }
+
+    private func weightedChoice(from clips: [AnimationClip]) -> AnimationClip? {
+        let total = clips.reduce(0.0) { $0 + ($1.flourish?.weight ?? 0) }
+        guard total > 0 else { return nil }
+
+        var roll = Double.random(in: 0..<total)
+        for clip in clips {
+            roll -= clip.flourish?.weight ?? 0
+            if roll < 0 { return clip }
+        }
+        return clips.last
+    }
+
+    // MARK: - Effects
+
+    private func spawnDueEffects() {
+        guard activeFlourish != nil, !pendingSpawns.isEmpty else { return }
+
+        var stillWaiting: [EffectSpawn] = []
+        for spawn in pendingSpawns {
+            if isDue(spawn) {
+                spawnEffect(spawn)
+            } else {
+                stillWaiting.append(spawn)
+            }
+        }
+        pendingSpawns = stillWaiting
+    }
+
+    private func isDue(_ spawn: EffectSpawn) -> Bool { isDue(spawn.trigger) }
+
+    /// Whether a trigger has been reached, measured on the active clip's playback.
+    ///
+    /// Shared by companion effects and by clip motion, so a leap's push-off can be timed
+    /// against its wind-up frames with exactly the vocabulary that times a muzzle flash.
+    private func isDue(_ trigger: EffectTrigger) -> Bool {
+        switch trigger {
+        case .onStart:
+            return true
+        case .onFrame(let frame):
+            // `>=` rather than `==`: at 12 Hz a 15 fps clip can skip a frame index
+            // entirely, and an effect that silently never fires on a throttled tick is a
+            // horrible thing to chase.
+            return frameIndex >= frame
+        case .afterDelay(let delay):
+            return flourishElapsed >= delay
+        }
+    }
+
+    /// Whether a travelling effect has left the strip and can be forgotten.
+    ///
+    /// Only travelling effects are tested. A stationary one is bounded by its animation
+    /// or its lifetime, and testing it would retire an effect that was deliberately
+    /// anchored just off the edge.
+    ///
+    /// The bounds are grown by the effect's own size so it is retired once it is fully
+    /// out of sight rather than the instant its centre crosses the line.
+    private func hasLeftStrip(_ effect: ActiveEffect) -> Bool {
+        guard effect.travels, stripSize != .zero else { return false }
+        let bounds = CGRect(origin: .zero, size: stripSize)
+            .insetBy(dx: -effect.size.width, dy: -effect.size.height)
+        return !bounds.contains(effect.position)
+    }
+
+    private func spawnEffect(_ spawn: EffectSpawn) {
+        guard let clip = catalogue[spawn.clip] else { return }
+        let offset = effectOffset(spawn.anchor)
+        nextEffectID += 1
+        // Logged because an effect that never appears has several possible causes —
+        // trigger never reached, artwork missing, anchor off the top of the strip — and
+        // this line is what separates "it never fired" from "it fired somewhere I can't see".
+        Self.logger.debug("Spawning effect '\(clip.id.rawValue, privacy: .public)' at frame \(self.frameIndex).")
+        let scale = configuration.pointsPerSourcePixel
+        let mirror: CGFloat = facing == .left ? -1 : 1
+
+        // A looping clip that stays put would otherwise never end. One loop is the least
+        // surprising default; a manifest asking for longer says so with `lifetime`.
+        let travels = spawn.travels
+        let lifetime = spawn.lifetime ?? (clip.loops && !travels ? clip.duration : nil)
+
+        activeEffects.append(
+            ActiveEffect(
+                id: nextEffectID,
+                clip: clip,
+                z: spawn.z,
+                position: effectPosition(offset: offset),
+                follows: spawn.follows,
+                offset: offset,
+                velocity: CGSize(
+                    width: spawn.velocity.dx * mirror * scale,
+                    height: spawn.velocity.dy * scale
+                ),
+                acceleration: CGSize(
+                    width: spawn.acceleration.dx * mirror * scale,
+                    height: spawn.acceleration.dy * scale
+                ),
+                lifetime: lifetime,
+                size: effectSize(for: clip),
+                mirrored: clip.mirrors && facing == .left
+            )
+        )
+    }
+
+    /// Converts a source-pixel anchor into a point offset from the sprite's centre.
+    ///
+    /// Mirrored on X when the sprite faces left, which is the only thing `facing` is
+    /// actually used for — the body artwork has its own left and right rows.
+    private func effectOffset(_ anchor: CGPoint) -> CGSize {
+        let scale = configuration.pointsPerSourcePixel
+        return CGSize(
+            width: (facing == .left ? -anchor.x : anchor.x) * scale,
+            height: anchor.y * scale
+        )
+    }
+
+    private func effectPosition(offset: CGSize) -> CGPoint {
+        let rect = spriteRect
+        return CGPoint(x: rect.midX + offset.width, y: rect.midY + offset.height)
+    }
+
+    /// On-screen size of an effect, in points.
+    ///
+    /// Scaled by the same points-per-source-pixel factor as the sprite, so an effect
+    /// drawn on a 64×64 grid comes out twice the size of one drawn on a 32×32 grid —
+    /// which is what an artist authoring a big explosion would expect.
+    ///
+    /// The clip's own ``AnimationClip/scale`` then trims that, for art which shares the
+    /// grid but should not share the character's size — a coin filling its 32×32 cell
+    /// reads as big as the sprite until it is halved. Size only: the anchor and any
+    /// velocity stay in world source pixels, so shrinking an effect does not move it.
+    private func effectSize(for clip: AnimationClip) -> CGSize {
+        let frame = catalogue.sheets[clip.sheet]?.frameSize ?? configuration.spriteSheetFrameSize
+        let scale = configuration.pointsPerSourcePixel * clip.scale
+        return CGSize(width: frame.width * scale, height: frame.height * scale)
+    }
+
+    private func refreshPublishedEffects() {
+        let renders = activeEffects
+            .sorted { $0.z < $1.z }
+            .map { effect in
+                EffectRender(
+                    id: effect.id,
+                    clip: effect.clip.id,
+                    frame: effect.frameIndex,
+                    position: effect.position,
+                    size: effectSize(for: effect.clip),
+                    z: effect.z,
+                    mirrored: effect.mirrored
+                )
+            }
+        // Same rule as everywhere else here: publish only on a real change. `elapsed`
+        // moves every tick but the rendered frame usually does not.
+        if renders != effects { effects = renders }
     }
 
     // MARK: - Geometry
 
     private var isAirborne: Bool { altitude > 0 }
+
+    /// Whether a clip is currently moving the sprite. See ``activeMotion``.
+    private var isMotionActive: Bool { activeMotion != nil }
 
     /// The sprite's bounding box in the window's SwiftUI coordinate space.
     ///

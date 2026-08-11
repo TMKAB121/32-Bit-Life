@@ -21,9 +21,12 @@
 		1B5F572E301C36F00097E205 /* ScreenGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F571A301C36F00097E205 /* ScreenGeometry.swift */; };
 		1B5F572F301C36F00097E205 /* BuiltInActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5709301C36F00097E205 /* BuiltInActions.swift */; };
 		1B5F5730301C36F00097E205 /* DesktopSpriteApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F570D301C36F00097E205 /* DesktopSpriteApp.swift */; };
-		1B5F5731301C36F00097E205 /* SpriteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5717301C36F00097E205 /* SpriteSheet.swift */; };
+		1B5F5731301C36F00097E205 /* SpriteSheetLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5717301C36F00097E205 /* SpriteSheetLibrary.swift */; };
 		1B5F5732301C36F00097E205 /* LoginItemController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B5F5719301C36F00097E205 /* LoginItemController.swift */; };
+		1B7C00DA3028D59F0038E2FF /* Effects.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B7C00D93028D59F0038E2FF /* Effects.png */; };
 		1B817B383022DDC800E2E7B9 /* SpriteSheet.png in Resources */ = {isa = PBXBuildFile; fileRef = 1B817B363022DDC800E2E7B9 /* SpriteSheet.png */; };
+		1BC1A002301C36F00097E205 /* AnimationClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BC1A001301C36F00097E205 /* AnimationClip.swift */; };
+		1BC1A004301C36F00097E205 /* Animations.json in Resources */ = {isa = PBXBuildFile; fileRef = 1BC1A003301C36F00097E205 /* Animations.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,12 +42,15 @@
 		1B5F5714301C36F00097E205 /* PixelArt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PixelArt.swift; sourceTree = "<group>"; };
 		1B5F5715301C36F00097E205 /* PlaceholderSprite.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceholderSprite.swift; sourceTree = "<group>"; };
 		1B5F5716301C36F00097E205 /* SpriteProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteProvider.swift; sourceTree = "<group>"; };
-		1B5F5717301C36F00097E205 /* SpriteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteSheet.swift; sourceTree = "<group>"; };
+		1B5F5717301C36F00097E205 /* SpriteSheetLibrary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteSheetLibrary.swift; sourceTree = "<group>"; };
 		1B5F5719301C36F00097E205 /* LoginItemController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginItemController.swift; sourceTree = "<group>"; };
 		1B5F571A301C36F00097E205 /* ScreenGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenGeometry.swift; sourceTree = "<group>"; };
 		1B5F571C301C36F00097E205 /* MouseTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MouseTracker.swift; sourceTree = "<group>"; };
 		1B5F571D301C36F00097E205 /* SpriteViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpriteViewModel.swift; sourceTree = "<group>"; };
+		1B7C00D93028D59F0038E2FF /* Effects.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Effects.png; sourceTree = "<group>"; };
 		1B817B363022DDC800E2E7B9 /* SpriteSheet.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = SpriteSheet.png; sourceTree = "<group>"; };
+		1BC1A001301C36F00097E205 /* AnimationClip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimationClip.swift; sourceTree = "<group>"; };
+		1BC1A003301C36F00097E205 /* Animations.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = Animations.json; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +102,7 @@
 		1B5F5712301C36F00097E205 /* Model */ = {
 			isa = PBXGroup;
 			children = (
+				1BC1A001301C36F00097E205 /* AnimationClip.swift */,
 				1B5F5710301C36F00097E205 /* SpriteConfiguration.swift */,
 				1B5F5711301C36F00097E205 /* SpriteState.swift */,
 			);
@@ -109,7 +116,7 @@
 				1B5F5714301C36F00097E205 /* PixelArt.swift */,
 				1B5F5715301C36F00097E205 /* PlaceholderSprite.swift */,
 				1B5F5716301C36F00097E205 /* SpriteProvider.swift */,
-				1B5F5717301C36F00097E205 /* SpriteSheet.swift */,
+				1B5F5717301C36F00097E205 /* SpriteSheetLibrary.swift */,
 			);
 			path = Rendering;
 			sourceTree = "<group>";
@@ -158,6 +165,8 @@
 		1B817B373022DDC800E2E7B9 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
+				1B7C00D93028D59F0038E2FF /* Effects.png */,
+				1BC1A003301C36F00097E205 /* Animations.json */,
 				1B817B363022DDC800E2E7B9 /* SpriteSheet.png */,
 			);
 			path = Resources;
@@ -225,6 +234,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				1B817B383022DDC800E2E7B9 /* SpriteSheet.png in Resources */,
+				1B7C00DA3028D59F0038E2FF /* Effects.png in Resources */,
+				1BC1A004301C36F00097E205 /* Animations.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -249,7 +260,8 @@
 				1B5F572E301C36F00097E205 /* ScreenGeometry.swift in Sources */,
 				1B5F572F301C36F00097E205 /* BuiltInActions.swift in Sources */,
 				1B5F5730301C36F00097E205 /* DesktopSpriteApp.swift in Sources */,
-				1B5F5731301C36F00097E205 /* SpriteSheet.swift in Sources */,
+				1B5F5731301C36F00097E205 /* SpriteSheetLibrary.swift in Sources */,
+				1BC1A002301C36F00097E205 /* AnimationClip.swift in Sources */,
 				1B5F5732301C36F00097E205 /* LoginItemController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

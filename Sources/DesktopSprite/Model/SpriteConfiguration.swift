@@ -36,6 +36,14 @@ struct SpriteConfiguration {
     /// is the line directly above the Dock. Positive values lift it higher.
     var bottomInset: CGFloat = 0
 
+    /// Extra headroom reserved for companion effects, in points.
+    ///
+    /// Effects are drawn relative to the sprite and routinely sit above its head — a
+    /// struck block, a puff of dust, a charge glow. The strip is the only canvas there
+    /// is, so anything taller than `jumpClearance` allows would simply be clipped off
+    /// the top of the window with no other symptom.
+    var effectClearance: CGFloat = 40
+
     /// Horizontal padding kept between the sprite and the edges of the screen.
     var edgeMargin: CGFloat = 12
 
@@ -79,6 +87,37 @@ struct SpriteConfiguration {
     /// Probability that a wander decision results in running rather than idling.
     var runProbability: Double = 0.6
 
+    // MARK: - Flourishes
+
+    /// Probability that a wander decision performs a flourish, when one is off cooldown.
+    ///
+    /// Checked before the run/idle roll, so this is the share of *all* wander decisions,
+    /// not of the leftovers. Keep it low: the per-clip cooldown is the real governor, and
+    /// this only decides how eagerly the sprite reaches for whatever is available.
+    var flourishProbability: Double = 0.35
+
+    /// Clip played when the sprite is clicked, instead of the usual jump.
+    ///
+    /// A development affordance. Waiting out a 45-second cooldown to see whether the
+    /// anchor on an effect is a few pixels off is a miserable way to draw, so point this
+    /// at whatever you are working on and click it as often as you like:
+    ///
+    /// ```swift
+    /// var clickClipID: ClipID? = ClipID("fire")
+    /// ```
+    ///
+    /// Cooldowns are ignored, the cursor does not interrupt it (it is by definition
+    /// resting on the sprite when you click), and the clip plays exactly one pass whether
+    /// or not it loops. Set back to `nil` to restore the jump.
+    var clickClipID: ClipID? = nil
+
+    /// Minimum seconds between any two flourishes, whatever their individual cooldowns.
+    ///
+    /// Per-clip cooldowns stop one animation repeating; this stops six *different*
+    /// animations coming off cooldown together and firing back to back, which reads as
+    /// the sprite having a fit rather than a personality.
+    var flourishSpacing: TimeInterval = 12.0
+
     // MARK: - Tick rates
 
     /// Tick interval used while the sprite is moving or reacting.
@@ -103,12 +142,29 @@ struct SpriteConfiguration {
     var spriteSheetAssetName = "SpriteSheet"
 
     /// Size of a single frame within the sprite sheet, in *pixels*.
+    ///
+    /// Used for the default sheet and as the fallback for any sheet the manifest does not
+    /// give an explicit size. Frame *counts* are not declared anywhere — they are read
+    /// from the artwork. See ``SpriteSheetLibrary``.
     var spriteSheetFrameSize = CGSize(width: 32, height: 32)
+
+    /// Name of the JSON animation manifest to look for in the app bundle.
+    ///
+    /// Optional. Without it the app animates from the built-in five-clip defaults; with
+    /// it, clips, sheets, flourishes and companion effects are all data. See `README.md`.
+    var animationManifestName = "Animations"
 
     // MARK: - Derived values
 
     /// Total height of the floating window.
-    var stripHeight: CGFloat { spriteSize.height + jumpClearance }
+    var stripHeight: CGFloat { spriteSize.height + jumpClearance + effectClearance }
+
+    /// How many points one source pixel occupies on screen.
+    ///
+    /// The conversion factor between artwork space and screen space, and the reason
+    /// companion-effect anchors are authored in source pixels: an anchor of "ten pixels
+    /// to the right" keeps meaning the same thing when ``spriteSize`` changes.
+    var pointsPerSourcePixel: CGFloat { spriteSize.width / max(spriteSheetFrameSize.width, 1) }
 
     static let `default` = SpriteConfiguration()
 }

@@ -23,8 +23,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     let configuration = SpriteConfiguration.default
     let actionRegistry = SpriteActionRegistry()
     let loginItem = LoginItemController()
+
+    /// The artwork and the animation catalogue describing it.
+    ///
+    /// Resolved together and before the view model, because the catalogue is what tells
+    /// the view model how many frames each clip has — and the catalogue cannot be built
+    /// until the sheets have been read, since the frame counts come out of the pixels.
+    private(set) lazy var assets = SpriteProviderFactory.bestAvailable(configuration: configuration)
+
     private(set) lazy var viewModel = SpriteViewModel(
         configuration: configuration,
+        catalogue: assets.catalogue,
         actionRegistry: actionRegistry
     )
 
@@ -37,9 +46,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private var window: SpriteWindow?
-
-    /// Retained so the chosen provider — and its cached frames — outlive `installWindow`.
-    private var provider: (any SpriteProvider)?
 
     /// Observer tokens paired with the centre they came from — `NSWorkspace` has its
     /// own notification centre, and a token must be removed from the centre that
@@ -104,12 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         let frame = ScreenGeometry.stripFrame(for: screen, configuration: configuration)
-        let provider = SpriteProviderFactory.bestAvailable(configuration: configuration)
-        self.provider = provider
 
         let window = SpriteWindow(contentRect: frame)
         let hostingView = SpriteHostingView(
-            rootView: DesktopSpriteView(viewModel: viewModel, provider: provider)
+            rootView: DesktopSpriteView(viewModel: viewModel, provider: assets.provider)
         )
         window.contentView = hostingView
         // `orderFrontRegardless` rather than `makeKeyAndOrderFront`: the window must
