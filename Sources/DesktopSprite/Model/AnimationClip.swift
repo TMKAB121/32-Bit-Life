@@ -155,6 +155,73 @@ struct FlourishRule {
     let weight: Double
 }
 
+// MARK: - Motion
+
+/// Which way a moving clip carries the sprite.
+///
+/// `facing` is the default because a clip that moves is nearly always drawn moving one
+/// way and ``AnimationClip/mirrors`` already handles the flip. The explicit sides are for
+/// art that only reads in one direction; `random` is what stops a leap from becoming a
+/// loop the eye can predict.
+enum MotionDirection: String {
+    case facing
+    case left
+    case right
+    case random
+}
+
+/// Movement a clip applies to the sprite itself while it plays.
+///
+/// The counterpart to ``EffectSpawn``, and deliberately sharing its vocabulary: source-pixel
+/// units, a trigger measured against the parent clip's playback, and an ending that always
+/// arrives. What differs is *what* moves — an effect is decoration travelling away from the
+/// character, this moves the character.
+///
+/// Only a clip that is **performed** can move the sprite: a flourish, or the clip named by
+/// ``SpriteConfiguration/clickClipID``. Motion on a behaviour-state clip, or on one used
+/// only as an effect, is inert — those play through other paths entirely — and the manifest
+/// loader says so rather than leaving it to be discovered from a PNG.
+struct SpriteMotion {
+
+    /// When, relative to this clip's own playback, the sprite is pushed off.
+    ///
+    /// The reason this exists rather than moving from frame zero: every leap worth drawing
+    /// has a wind-up. `{"onFrame": 2}` lets the sprite crouch for two frames and *then*
+    /// leave the ground, which is the whole difference between a leap and a teleport.
+    let trigger: EffectTrigger
+
+    let direction: MotionDirection
+
+    /// Horizontal speed in **source pixels per second**, unsigned.
+    ///
+    /// Source pixels for the same reason ``EffectSpawn/anchor`` uses them: the number keeps
+    /// meaning the same thing when `spriteSize` changes. ``direction`` supplies the sign.
+    let speed: CGFloat
+
+    /// Upward velocity applied when the motion starts, in source pixels per second.
+    ///
+    /// Defaults to the configured jump velocity expressed in source pixels, so a motion
+    /// block that says nothing about height arcs exactly like an ordinary jump. `0` opts
+    /// out of the arc entirely and gives a ground-level dash.
+    ///
+    /// There is deliberately no per-clip gravity to pair with this. Fall rate is a large
+    /// part of what makes a character read as one thing rather than several, so every arc
+    /// in the app falls at ``SpriteConfiguration/gravity`` and height is tuned from here
+    /// alone.
+    let launch: CGFloat
+
+    /// Maximum horizontal travel in source pixels, or `nil` for no cap.
+    ///
+    /// A **cap, not a shaper**. The natural distance is whatever ``speed`` covers before the
+    /// sprite lands; this only cuts it short. Set below that and the sprite stops dead in
+    /// mid-air and drops vertically — occasionally the intent, usually a sign the number is
+    /// wrong.
+    let distance: CGFloat?
+
+    /// Whether this motion goes anywhere at all. One that does not is dropped at load.
+    var moves: Bool { speed > 0 || launch > 0 }
+}
+
 // MARK: - Clip
 
 /// A single animation: where its frames are, how fast they play, and what it drags
@@ -196,11 +263,40 @@ struct AnimationClip {
     /// pointing the way it was fired even if the sprite turns around behind it.
     let mirrors: Bool
 
+    /// Multiplier on the size this clip is *drawn* at, leaving the artwork untouched.
+    ///
+    /// The escape hatch for art that is authored on the same grid as everything else but
+    /// reads too big on screen. A coin drawn to fill a 32×32 cell is the same nominal size
+    /// as the character; `"scale": 0.5` renders it at half that without repainting the
+    /// sheet or splitting it onto a second, smaller-celled one.
+    ///
+    /// Distinct from ``SheetDescriptor/scale``, which describes the *file*: that one says
+    /// "this sheet was drawn at twice its nominal resolution", this one says "draw this
+    /// clip smaller than its cell implies". They compose in principle, but reach for this
+    /// one — it is per clip, which is the granularity the problem actually has.
+    ///
+    /// Applied to effects only. See ``SpriteViewModel`` — the sprite's own size is
+    /// ``SpriteConfiguration/spriteSize``, which the hit-test box and the ground line are
+    /// both measured from, so a state clip scaling itself would desynchronise the
+    /// character from its own geometry. The manifest loader logs a clip that asks anyway.
+    ///
+    /// Scaling is about the drawn size alone: `anchor`, `velocity` and `acceleration` stay
+    /// in world source pixels, so a shrunk effect spawns and travels exactly where it did.
+    /// Prefer halves and quarters — a scale that puts source pixels on fractional device
+    /// pixels reintroduces the shimmer `pixelSnapped(_:)` exists to remove.
+    let scale: CGFloat
+
     /// Present if the sprite may perform this clip spontaneously.
     let flourish: FlourishRule?
 
     /// Companion animations spawned while this clip plays.
     let effects: [EffectSpawn]
+
+    /// Movement this clip applies to the sprite while it plays, if any.
+    ///
+    /// Only honoured for a clip that is performed — a flourish or the click preview. See
+    /// ``SpriteMotion``.
+    let motion: SpriteMotion?
 
     /// Seconds each frame is on screen.
     ///
@@ -219,8 +315,10 @@ struct AnimationClip {
         framesPerSecond: Double,
         loops: Bool,
         mirrors: Bool = false,
+        scale: CGFloat = 1,
         flourish: FlourishRule? = nil,
-        effects: [EffectSpawn] = []
+        effects: [EffectSpawn] = [],
+        motion: SpriteMotion? = nil
     ) {
         self.id = id
         self.sheet = sheet
@@ -229,8 +327,13 @@ struct AnimationClip {
         self.framesPerSecond = framesPerSecond
         self.loops = loops
         self.mirrors = mirrors
+        // A zero or negative scale draws nothing at all, which looks identical to a
+        // missing sheet row. Clamped rather than rejected: the clip is still perfectly
+        // playable, and the loader has already said so out loud.
+        self.scale = scale > 0 ? scale : 1
         self.flourish = flourish
         self.effects = effects
+        self.motion = motion
     }
 }
 
@@ -320,8 +423,15 @@ struct AnimationCatalogue {
                 framesPerSecond: clip.framesPerSecond,
                 loops: clip.loops,
                 mirrors: clip.mirrors,
+                scale: clip.scale,
                 flourish: nil,
-                effects: clip.effects
+                effects: clip.effects,
+                // Every field has to be carried across by hand here, so anything added to
+                // `AnimationClip` and forgotten below is silently lost for exactly the
+                // clips that took this path. Motion in particular fails invisibly: the
+                // flourish is gone anyway, so nothing looks wrong until the clip is later
+                // pointed at by `clickClipID` and refuses to move.
+                motion: clip.motion
             )
         }
         return AnimationCatalogue(clips: kept, sheets: sheets)
@@ -427,6 +537,21 @@ struct AnimationManifest: Decodable {
         let z: Int?
     }
 
+    /// Movement applied to the sprite itself. See ``SpriteMotion``.
+    ///
+    /// Every field is optional; `{"speed": 60}` alone is a complete, sensible leap.
+    struct Motion: Decodable {
+        let trigger: Trigger?
+        /// `"facing"` (the default), `"left"`, `"right"` or `"random"`.
+        let direction: String?
+        /// Horizontal speed in source pixels per second.
+        let speed: CGFloat?
+        /// Upward velocity in source pixels per second. Defaults to the configured jump.
+        let launch: CGFloat?
+        /// Cap on horizontal travel, in source pixels.
+        let distance: CGFloat?
+    }
+
     struct Clip: Decodable {
         let id: ClipID
         let sheet: String?
@@ -437,8 +562,11 @@ struct AnimationManifest: Decodable {
         let loops: Bool?
         /// Flip the artwork when the sprite faces left. See ``AnimationClip/mirrors``.
         let mirrors: Bool?
+        /// Draw this clip larger or smaller than its cell. See ``AnimationClip/scale``.
+        let scale: CGFloat?
         let flourish: Flourish?
         let effects: [Effect]?
+        let motion: Motion?
     }
 
     let version: Int?
@@ -564,6 +692,12 @@ extension AnimationCatalogue {
             let existing = clips[entry.id]
             let loops = entry.loops ?? existing?.loops ?? true
 
+            var scale = entry.scale ?? existing?.scale ?? 1
+            if let declared = entry.scale, declared <= 0 {
+                logger.error("Clip '\(entry.id.rawValue, privacy: .public)' has a scale of \(declared, privacy: .public), which would draw nothing; using 1.")
+                scale = 1
+            }
+
             var flourish = entry.flourish.map {
                 FlourishRule(cooldown: max($0.cooldown, 0), weight: max($0.weight ?? 1, 0))
             }
@@ -576,6 +710,44 @@ extension AnimationCatalogue {
                 flourish = nil
             }
 
+            var motion = entry.motion.map { spec -> SpriteMotion in
+                let direction = spec.direction.flatMap(MotionDirection.init(rawValue:))
+                if let named = spec.direction, direction == nil {
+                    logger.error("Clip '\(entry.id.rawValue, privacy: .public)' has unknown motion direction '\(named, privacy: .public)'; using 'facing'.")
+                }
+                return SpriteMotion(
+                    trigger: spec.trigger?.resolved ?? .onStart,
+                    direction: direction ?? .facing,
+                    speed: max(spec.speed ?? 0, 0),
+                    // A motion block that says nothing about height should still arc, so
+                    // the default is the ordinary jump expressed in the manifest's units.
+                    launch: max(spec.launch ?? (configuration.jumpVelocity / configuration.pointsPerSourcePixel), 0),
+                    distance: spec.distance.map { max($0, 0) }
+                )
+            }
+
+            if let resolved = motion {
+                if loops {
+                    // The same reasoning as the looping-flourish rule above. Landing ends an
+                    // arc, but a looping *ground* dash has no landing, and with no `distance`
+                    // its only remaining terminator is the edge of the screen.
+                    logger.error("Clip '\(entry.id.rawValue, privacy: .public)' is a looping clip with motion, which would have no natural ending; the motion is ignored. Set \"loops\": false.")
+                    motion = nil
+                } else if !resolved.moves {
+                    logger.error("Clip '\(entry.id.rawValue, privacy: .public)' declares motion with neither speed nor launch; it will not move.")
+                    motion = nil
+                } else {
+                    // The strip is the only canvas there is. An arc taller than the headroom
+                    // above the sprite is simply clipped off the top of the window, with no
+                    // other symptom to go on.
+                    let peak = pow(resolved.launch * configuration.pointsPerSourcePixel, 2) / (2 * max(configuration.gravity, 1))
+                    let headroom = configuration.jumpClearance + configuration.effectClearance
+                    if peak > headroom {
+                        logger.error("Clip '\(entry.id.rawValue, privacy: .public)' launches to roughly \(Int(peak))pt, above the \(Int(headroom))pt of headroom in the strip; the top of the arc will be clipped.")
+                    }
+                }
+            }
+
             clips[entry.id] = AnimationClip(
                 id: entry.id,
                 sheet: sheetName,
@@ -584,16 +756,45 @@ extension AnimationCatalogue {
                 framesPerSecond: entry.fps ?? existing?.framesPerSecond ?? 10,
                 loops: loops,
                 mirrors: entry.mirrors ?? existing?.mirrors ?? false,
+                scale: scale,
                 flourish: flourish,
-                effects: effects
+                effects: effects,
+                motion: motion
             )
         }
 
         // An effect naming a clip that does not exist would silently never draw, which is
         // a miserable thing to debug from a PNG. Say so once, at load.
+        let spawnedAsEffect = Set(clips.values.flatMap { $0.effects.map(\.clip) })
         for clip in clips.values {
-            for effect in clip.effects where clips[effect.clip] == nil {
-                logger.error("Clip '\(clip.id.rawValue, privacy: .public)' spawns unknown effect clip '\(effect.clip.rawValue, privacy: .public)'; it will never appear.")
+            // `scale` is read where an effect is sized and nowhere else, so on a clip the
+            // sprite plays itself it is data with no reader — the same shape of trap as
+            // motion on a non-flourish clip below, and just as invisible from the artwork.
+            if clip.scale != 1, !spawnedAsEffect.contains(clip.id) {
+                logger.info("Clip '\(clip.id.rawValue, privacy: .public)' sets a scale but is never spawned as an effect; scale applies to effects only and will be ignored.")
+            }
+            for effect in clip.effects {
+                if clips[effect.clip] == nil {
+                    logger.error("Clip '\(clip.id.rawValue, privacy: .public)' spawns unknown effect clip '\(effect.clip.rawValue, privacy: .public)'; it will never appear.")
+                }
+                // `frameIndex` is clamped to the clip, so a trigger past the last frame is
+                // never reached — the effect simply never happens, with nothing on screen to
+                // say why. The artwork is the authority on frame counts, so this only comes
+                // out at load, once the row has actually been measured.
+                if case .onFrame(let frame) = effect.trigger, frame >= clip.frameCount {
+                    logger.error("Clip '\(clip.id.rawValue, privacy: .public)' spawns '\(effect.clip.rawValue, privacy: .public)' on frame \(frame), but only \(clip.frameCount) frame(s) are drawn; it will never appear.")
+                }
+            }
+            if let motion = clip.motion, case .onFrame(let frame) = motion.trigger, frame >= clip.frameCount {
+                logger.error("Clip '\(clip.id.rawValue, privacy: .public)' starts its motion on frame \(frame), but only \(clip.frameCount) frame(s) are drawn; the sprite will not move.")
+            }
+            // Motion is applied only where a clip is *performed*, and the two ways in are a
+            // flourish roll and a click preview. Anything else — a behaviour-state clip, a
+            // clip used purely as an effect — plays through a path that never reads it, so
+            // the motion is data with no reader. Logged at `info`, not `error`, because
+            // pointing `clickClipID` at a non-flourish clip is exactly how you author one.
+            if clip.motion != nil, clip.flourish == nil {
+                logger.info("Clip '\(clip.id.rawValue, privacy: .public)' declares motion but is not a flourish; it will only move the sprite while it is set as `clickClipID`.")
             }
         }
 

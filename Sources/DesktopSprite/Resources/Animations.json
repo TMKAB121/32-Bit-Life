@@ -12,14 +12,32 @@
     { "id": "jumping",      "sheet": "SpriteSheet", "row": 4, "fps": 1,   "loops": false, "mirrors": true },
     { "id": "fire",         "sheet": "SpriteSheet", "row": 5, "fps": 6,   "loops": false,
         "mirrors": true,
-        "flourish": { "cooldown": 45, "weight": 1 },
+        "flourish": { "cooldown": 20, "weight": 1 },
         "effects": [
           { "clip": "chargeShot", "trigger": { "onFrame": 1 }, "anchor": [15, 5],
             "follows": true, "lifetime": 0.33, "z": 1 },
           { "clip": "fireShot", "trigger": { "onFrame": 3 }, "anchor": [15, 5],
             "velocity": [120, 0], "lifetime": 3, "z": 1 }
         ]},
+    { "id": "get_coin",     "sheet": "SpriteSheet", "row": 6, "fps": 10,  "loops": false,
+        "mirrors": true,
+        "flourish": { "cooldown": 20, "weight": 1 },
+        "motion": {
+            "trigger":   { "onFrame": 1 },
+            "direction": "random",
+            "speed":     100,
+            "launch":    110,
+            "distance":  45
+        },
+        "effects": [
+          { "clip": "coinBlock", "trigger": { "onFrame": 2 }, "anchor": [8, -28],
+            "follows": false, "lifetime": 1, "z": 1 },
+          { "clip": "coin", "trigger": { "onFrame": 2 }, "anchor": [8, -28],
+            "follows": false, "velocity": [0, -50], "lifetime": 1, "z": 0 }
+        ]},
     { "id": "chargeShot", "sheet": "Effects", "row": 0, "fps": 12, "loops": false, "mirrors": true },
-    { "id": "fireShot",   "sheet": "Effects", "row": 1, "fps": 12, "loops": true,  "mirrors": true }
+    { "id": "fireShot",   "sheet": "Effects", "row": 1, "fps": 12, "loops": true,  "mirrors": true },
+    { "id": "coinBlock",  "sheet": "Effects", "row": 2, "fps": 12, "loops": false, "mirrors": false, "scale": 0.75 },
+    { "id": "coin",       "sheet": "Effects", "row": 3, "fps": 15, "loops": true, "mirrors": false, "scale": 0.75 }
   ]
 }

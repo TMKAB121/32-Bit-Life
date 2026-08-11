@@ -265,7 +265,24 @@ be symmetric, or deliberately always face the viewer, or have its own drawn left
 For an effect the decision is made when it spawns, so a shot already in flight keeps
 pointing the way it was fired even if the sprite turns around behind it.
 
-This is also how to get one run cycle instead of two — point both running clips at the
+**`"scale"`** draws a clip at a fraction of its cell without touching the artwork. Every
+clip on a sheet shares one frame size, so a coin painted to fill its 32×32 cell comes out
+as big as the character; `"scale": 0.5` renders it at half that. It affects the drawn size
+only — the `anchor` and any `velocity` stay in world source pixels, so a shrunk effect
+spawns and travels exactly where it did before. Prefer halves and quarters: a scale that
+lands source pixels on fractional device pixels brings back the shimmer the pixel snapping
+exists to remove.
+
+It applies to **effects only**. The sprite's own size is `spriteSize` in
+`SpriteConfiguration.swift`, which the hit-test box and the ground line are both measured
+from, so a behaviour clip cannot shrink itself out of its own geometry. A clip that sets a
+scale and is never spawned as an effect is called out in the load-time log.
+
+```json
+{ "id": "coin", "sheet": "Effects", "row": 3, "fps": 15, "loops": true, "scale": 0.5 }
+```
+
+Mirroring is also how to get one run cycle instead of two — point both running clips at the
 same row and let the left one flip:
 
 ```json
@@ -320,6 +337,59 @@ own object by then.
 If an effect is drawn far above the sprite, raise `effectClearance` in
 `SpriteConfiguration.swift` — the strip is the only canvas, and anything taller than it is
 simply clipped.
+
+**Motion** moves the *sprite itself* while a clip plays — a leap, a pounce, a dash. This is
+the one thing effects cannot do: they are decoration travelling away from the character,
+whereas this carries the character.
+
+```json
+{ "id": "leap", "sheet": "SpriteSheet", "row": 6, "fps": 12, "loops": false, "mirrors": true,
+  "flourish": { "cooldown": 30, "weight": 1 },
+  "motion": {
+    "trigger":   { "onFrame": 1 },
+    "direction": "random",
+    "speed":     60,
+    "launch":    150,
+    "distance":  45
+  } }
+```
+
+- `trigger` — exactly the effect trigger: `{"onFrame": 1}`, `{"afterDelay": 0.2}`, or
+  omitted for "on start". This is what buys you a wind-up: the sprite crouches for a frame
+  and *then* leaves the ground, which is the difference between a leap and a teleport. A
+  trigger past the last drawn frame never fires, so the load-time log calls that out.
+- `direction` — `"facing"` (default), `"left"`, `"right"` or `"random"`. Resolved once, when
+  the clip starts rather than when the motion fires, so `mirrors` artwork faces the way it is
+  about to travel throughout the wind-up. Effects spawned mid-clip inherit it for free.
+- `speed` — horizontal, in source pixels per second, unsigned. `direction` gives the sign.
+- `launch` — upward velocity in source pixels per second. Defaults to the configured jump
+  (`jumpVelocity ÷ pointsPerSourcePixel` = 150), so `{"speed": 60}` on its own already arcs
+  like an ordinary jump. Set `0` for a ground-level dash.
+- `distance` — a **cap on horizontal travel** in source pixels, not a shaper. The natural
+  distance is whatever `speed` covers before the sprite lands: with the default gravity and
+  launch that is 0.64 s of airtime, so `speed: 60` covers about 39 source pixels on its own.
+  A `distance` above that never engages, which is what you want from a safety rail. Set it
+  *below* that and the sprite stops dead in mid-air and drops vertically.
+
+There is deliberately no per-clip gravity. Fall rate is a large part of what makes a
+character read as one thing rather than several, so every arc falls at
+`SpriteConfiguration.gravity` and height is tuned from `launch` alone. Peak height is
+roughly `(launch × 3)² ÷ (2 × gravity)`, and the usable headroom is
+`jumpClearance + effectClearance` — so about `launch: 200` is the ceiling before the top of
+the arc is clipped off the window. The loader works this out and logs it.
+
+**Only a clip that is *performed* can move the sprite** — a flourish, or whatever
+`clickClipID` points at. Motion on a behaviour-state clip, or on one used purely as an
+effect, is never read; the loader logs that too. A moving clip is also **uninterruptible**:
+once the sprite is travelling, the cursor arriving will not abandon it in mid-air and a
+click will not replace it, though the click still fires its action. The clip holds on its
+last frame until the sprite lands, so draw the landing pose there. The window that *is*
+interruptible is the wind-up: a motion still waiting for its trigger has not started yet, so
+an approaching cursor can still abort the leap before it leaves the ground.
+
+A moving clip must be non-looping, for the same reason a flourish must: landing, the
+`distance` cap, or the edge of the screen has to end it. A looping one has its motion
+dropped and logged.
 
 Every failure here is survivable and logged: a missing manifest falls back to the
 built-ins, a malformed one does the same, and a single clip naming a missing sheet or an

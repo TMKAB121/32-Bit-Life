@@ -91,20 +91,29 @@ One `Timer` on `RunLoop.main` in `.common` mode drives everything.
 3. `reactToCursor()` — startle / surprised / settle back to idle; cancels any flourish
 4. `updateWander()` — the autonomous AI, suppressed while reacting or airborne; this is
    where a flourish is rolled for
-5. `updatePhysics()` — gravity, horizontal movement, edge turnaround
+5. `updatePhysics()` — gravity, then clip motion, then running; edge turnaround
 6. `syncClip()` — publishes the clip to draw, resetting the frame clock when it changes
 7. `advanceFrame()` — animation frame clock, driven by the catalogue's frame count
-8. `updateEffects()` — spawns effects whose trigger has been reached, integrates the
+8. `startDueMotion()` — starts a moving clip's travel once its trigger is reached
+9. `updateEffects()` — spawns effects whose trigger has been reached, integrates the
    travelling ones, retires the finished and the off-screen
-9. `updateFlourish()` — retires a flourish once its clip has played out
-10. `refreshPublishedPosition()`
-11. `updateTickRate()` — 60 Hz active, 12 Hz after 3s idle-and-alone
+10. `updateFlourish()` — retires a flourish once its clip has played out *and* the sprite
+    has come to rest
+11. `refreshPublishedPosition()`
+12. `updateTickRate()` — 60 Hz active, 12 Hz after 3s idle-and-alone
 
 New per-frame behaviour goes in as a stage here, not as a second timer.
 
-Stages 8 and 9 are in that order on purpose: `updateFlourish` discards anything still
-pending when it retires a clip, so an effect triggered on the clip's *last* frame would
-never spawn if they were swapped.
+Stages 8 and 9 sit before stage 10 on purpose: `updateFlourish` discards anything still
+pending when it retires a clip, so a motion or an effect triggered on the clip's *last*
+frame would never fire if they were swapped. Both read `frameIndex`, so both must also
+come after `advanceFrame`.
+
+`advanceFrame` deliberately does nothing on the tick `syncClip` swapped the clip in.
+Without that, a flourish starting from dormancy has its first frame advanced past before
+it is ever drawn — the tick carries a whole 12 Hz delta — and since flourishes only start
+from idle, an authored `onFrame` wind-up would fire almost immediately and almost at
+random.
 
 ## Invariants — do not break these
 
@@ -139,6 +148,16 @@ never spawn if they were swapped.
 - **Every effect must have an ending.** Lifetime, animation length, or leaving the strip —
   one of the three always applies (see `ActiveEffect.isFinished` and the lifetime default
   in `spawnEffect`). A looping effect with no way to die pins the app at 60 Hz forever.
+- **Every motion must have an ending**, for the same reason. Landing, the authored
+  `distance` cap, or the edge of the strip — one of the three always applies. A moving clip
+  holds `activeFlourish` for its whole travel, and `updateTickRate` counts that as activity,
+  so a motion that never ends pins the app at 60 Hz just as an immortal effect would. This
+  is why a looping clip has its motion dropped at load.
+- **A moving clip is uninterruptible.** `cancelFlourish`, `performClip`, `handleTap` and
+  `beginJump` all refuse while `isMotionActive`. Abandoning one mid-arc strands the sprite
+  in the air with velocity and no clip to explain it. `isMotionActive` is stored, never
+  derived from `isAirborne` — an ordinary startle jump is airborne too, and conflating the
+  two silently changes how a plain jump interacts with click previews and cancellation.
 - **Travelling effects integrate velocity before position**, matching the order
   `updatePhysics` uses for the sprite. Mixing the two orders makes an effect and the
   sprite fall at visibly different rates from the same acceleration.
@@ -147,8 +166,21 @@ never spawn if they were swapped.
 
 **Add an animation** — no Swift. Draw a row, add a clip to `Resources/Animations.json`
 naming its sheet and row. Frame count comes from the pixels. Give it a `flourish` rule
-and the sprite performs it spontaneously; hang `effects` off it for companion animations.
-See the README for the full schema.
+and the sprite performs it spontaneously; hang `effects` off it for companion animations,
+and a `motion` block to make it move the sprite itself (a leap, a pounce, a dash). See the
+README for the full schema.
+
+`"scale"` on a clip trims the size it is *drawn* at, for art that shares the sheet's cell
+size but should not read as big as the character. Drawn size only — anchors and velocities
+stay in world source pixels — and it is honoured for **effects only**, since `spriteSize`
+is what the hit-test box and the ground line are measured from. The loader logs a clip that
+sets one and is never spawned as an effect.
+
+Motion and effects share a vocabulary on purpose — source-pixel units, the same `trigger`,
+mirrored on facing — the difference being that an effect moves decoration away from the
+character while `motion` moves the character. Only a *performed* clip can move the sprite:
+a flourish, or whatever `clickClipID` points at. Motion on a state clip or an effect-only
+clip is inert, and the loader logs it.
 
 **Add an animation *state*** — only when you need new *behaviour*, not just a new
 animation. Add a case to `SpriteState`, then fill in the three switches

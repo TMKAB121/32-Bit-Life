@@ -109,7 +109,7 @@ struct SpriteConfiguration {
     /// Cooldowns are ignored, the cursor does not interrupt it (it is by definition
     /// resting on the sprite when you click), and the clip plays exactly one pass whether
     /// or not it loops. Set back to `nil` to restore the jump.
-    var clickClipID: ClipID? = ClipID("fire")
+    var clickClipID: ClipID? = nil
 
     /// Minimum seconds between any two flourishes, whatever their individual cooldowns.
     ///
